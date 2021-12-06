@@ -1,12 +1,12 @@
+import sys
 import os
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
-os.environ["CUDA_VISIBLE_DEVICES"]= "1"
-os.environ["TF_FORCE_GPU_ALLOW_GROWTH"] = "true" 
-import sys
+os.environ["CUDA_VISIBLE_DEVICES"]= sys.argv[1]
+os.environ["TF_FORCE_GPU_ALLOW_GROWTH"] = "true"
 
 import tensorflow as tf
 from attack.main_attack import PoisonAttack
-from attack.attack_utils import mia, check_mia
+from attack.attack_utils import mia, check_mia, poison_attack
 
 import numpy as np
 import gc
@@ -51,9 +51,7 @@ def attack_cifar10(poison_config):
 
 
 if __name__ == '__main__':
-    target_class = 3 
     INPUT_SIZE = (96, 96, 3)
-
     poison_dataset_config = {
         'dataset_name': 'cifar10',
         'input_shape': INPUT_SIZE,
@@ -66,22 +64,29 @@ if __name__ == '__main__':
         'if_selection': False
     }
 
-    for seed_amount in [1000]:
-        for poison_encoder in ['inceptionv3', 'mobilenetv2', 'xception']:
-            poison_config = {
-            'poison_encoder_name': poison_encoder,
-            'poison_img_dir': './poisoning_dataset_clean_label/imgs/',
-            'poison_label_dir': './poisoning_dataset_clean_label/labels/',
-            'anchorpoint_img_dir': './poisoning_dataset_clean_label/anchorpoint_imgs/',
-            'target_class': target_class,
-            'seed_amount': seed_amount,
-            'anchorpoint_amount': 1000,
-            'clean_label_flag': True,
-            'fcn_sizes': [128, 10],
-            'transferable_attack_flag': False,
-            }
-            check_mia(poison_config,
-                      poison_dataset_config,
-                      attack_config,
-                      target_class)
-            break
+    for target_class in range(10):
+        for seed_amount in [1000]:
+            for poison_encoder in ['inceptionv3', 'mobilenetv2', 'xception']:
+            #for poison_encoder in ['inceptionv3']:
+                poison_config = {
+                'poison_encoder_name': poison_encoder,
+                'poison_img_dir': './poisoning_dataset_clean_label/imgs/',
+                'poison_label_dir': './poisoning_dataset_clean_label/labels/',
+                'anchorpoint_img_dir': './poisoning_dataset_clean_label/anchorpoint_imgs/',
+                'target_class': target_class,
+                'seed_amount': seed_amount,
+                'anchorpoint_amount': 1000,
+                'clean_label_flag': True,
+                'fcn_sizes': [128, 10],
+                'transferable_attack_flag': False,
+                }
+                poison_attack(poison_config,
+                              poison_dataset_config,
+                              attack_config)
+
+                """
+                check_mia(poison_config,
+                        poison_dataset_config,
+                        attack_config,
+                        target_class)
+                """

@@ -6,7 +6,7 @@ sys.path.append('..')
 
 import gc
 import numpy as np
-from sklearn.metrics import roc_auc_score 
+from sklearn.metrics import roc_auc_score
 import tensorflow as tf
 
 import PIL
@@ -16,10 +16,13 @@ def load_dataset(img_dir, label_path, img_num):
             load_poison_label(label_path, img_num))
 
 def load_img_from_dir(img_dir,
-                      img_amount):
+                      img_amount=None):
     imgs = []
     if type(img_amount) is list:
         start_idx, end_idx = img_amount
+    elif img_amount is None:
+        start_idx = 0
+        end_idx = len(os.listdir(img_dir))
     else:
         start_idx = 0
         end_idx = img_amount
@@ -96,8 +99,8 @@ def mia(model, member_dataset, nonmember_dataset, metric='Mentr'):
     nonmember_label = np.ones(len(nonmember_preds))
     mia_auc = roc_auc_score(np.r_[member_label, nonmember_label],
                             np.r_[member_score, nonmember_score])
-    
-    
+
+
     member_amount = len(member_label)
     nonmember_amount = len(nonmember_label)
     print("/"*20)
@@ -108,12 +111,26 @@ def mia(model, member_dataset, nonmember_dataset, metric='Mentr'):
     return mia_auc
 
 def evaluate_model(model, testing_dataset):
-    # Get the testing accuracy 
+    # Get the testing accuracy
+    model.compile(optimizer=tf.keras.optimizers.Adam(),
+                  loss=tf.keras.losses.CategoricalCrossentropy(),
+                  metrics=['accuracy'])
     loss, acc = model.evaluate(testing_dataset[0],
                                testing_dataset[1],
                                batch_size=100,
                                verbose=0)
     return acc
+
+def poison_attack(poison_config,
+                  poison_dataset_config,
+                  attack_config):
+    from attack.main_attack import PoisonAttack
+    attack = PoisonAttack(poison_config,
+                          poison_dataset_config,
+                          attack_config)
+    model = attack.get_poisoned_model()
+    del model
+
 
 def check_mia(poison_config,
               poison_dataset_config,
@@ -124,15 +141,12 @@ def check_mia(poison_config,
     attack = PoisonAttack(poison_config,
                           poison_dataset_config,
                           attack_config)
-    """
     member_dataset = attack.dataset.get_member_dataset(target_class=target_class)
     nonmember_dataset = attack.dataset.get_nonmember_dataset(target_class=target_class)
     testing_dataset = attack.dataset.get_nonmember_dataset()
-    """
     print('='*30)
     print("Target encoder:{}".format(attack.target_encoder_name))
     print("Poison encoder:{}".format(attack.poison_encoder_name))
-    """
     print("Working on clean model.")
     model = attack.get_clean_model()
     clean_auc = mia(model, member_dataset, nonmember_dataset, metric='Mentr')
@@ -145,10 +159,8 @@ def check_mia(poison_config,
     del model
     gc.collect()
     print("*"*20)
-    """
     print("Poisoning model.")
     model = attack.get_poisoned_model()
-    """
     poison_auc = mia(model, member_dataset, nonmember_dataset, metric='Mentr')
     poisoned_test_acc_sub = evaluate_model(model, nonmember_dataset)
     poisoned_test_acc = evaluate_model(model, testing_dataset)
@@ -157,31 +169,32 @@ def check_mia(poison_config,
     print("Testing accuracy of the whole dataset: {:.2f}% ({})"\
           .format(poisoned_test_acc*100, len(testing_dataset[0])))
 
-    anchorpoint_dataset = attack.get_anchorpoint_dataset()
-    print(anchorpoint_dataset[0].shape)
-    print(anchorpoint_dataset[1].shape)
-    poison_dataset = attack.get_poison_dataset()
-    normal_dataset = attack.dataset.get_member_dataset(data_amount=1000)
-    visualize_features(model,
-                       normal_dataset,
-#                       (member_dataset[0][:1000],
-#                        member_dataset[1][:1000]),
-                       (poison_dataset[0][:100],
-                        poison_dataset[1][:100]),
-                       anchorpoint_dataset,
-                       target_class,
-                       attack.target_encoder_name,
-                       poison_dataset_config['dataset_name'])
-    """
+    if poison_config['clean_label_flag']:
+        anchorpoint_dataset = attack.get_anchorpoint_dataset()
+        print(anchorpoint_dataset[0].shape)
+        print(anchorpoint_dataset[1].shape)
+        poison_dataset = attack.get_poison_dataset()
+        normal_dataset = attack.dataset.get_member_dataset()
+        real_poison_amount = int((attack.dataset.num_classes-1)/attack.dataset.num_classes*attack.seed_amount)
+        visualize_features(model,
+                        normal_dataset,
+                        (poison_dataset[0][:real_poison_amount],
+                            poison_dataset[1][:real_poison_amount]),
+                        (anchorpoint_dataset[0][:real_poison_amount],
+                            anchorpoint_dataset[1][:real_poison_amount]),
+                        target_class,
+                        attack.target_encoder_name,
+                        poison_dataset_config['dataset_name'])
     del model
     gc.collect()
-    #print("Diff:{:.2f}".format(poison_auc-clean_auc))
+    print("Diff:{:.2f}".format(poison_auc-clean_auc))
     print('='*30)
 
 def extract_features(model,
                      inputs):
     feature_extractor = tf.keras.Model(model.inputs,
-                                       model.get_layer('feature_extractor').output)
+                                       model.get_layer('feature_extractor').get_output_at(1))
+    tf.keras.utils.plot_model(feature_extractor, 'model.png')
     return feature_extractor.predict(inputs).reshape((len(inputs),-1))
 
 def visualize_features(model,
@@ -195,8 +208,10 @@ def visualize_features(model,
     #poison_features = extract_features(model, poison_dataset[0])
     features = extract_features(model,
                                 np.r_[clean_dataset[0], poison_dataset[0], anchorpoint_dataset[0]])
-    from sklearn.manifold import TSNE
-    compressed_features = TSNE(n_components=2).fit_transform(features)
+    #from sklearn.manifold import TSNE
+    from MulticoreTSNE import MulticoreTSNE as TSNE
+
+    compressed_features = TSNE(n_jobs=4, n_components=2, perplexity=100, n_iter=1000).fit_transform(features)
     clean_compressed_features = compressed_features[:clean_dataset[0].shape[0],:]
     poison_compressed_features = compressed_features[clean_dataset[0].shape[0]:-anchorpoint_dataset[0].shape[0],:]
     anchorpoint_compressed_features = compressed_features[-anchorpoint_dataset[0].shape[0]:,:]
@@ -216,13 +231,13 @@ def visualize_features(model,
 
     sns.set()
     ##################
-    plt.figure()
+    fig, ax = plt.subplots()
     plt.scatter(clean_compressed_features[:,0],
                 clean_compressed_features[:,1],
                 c=np.argmax(clean_dataset[1],axis=1),
                 cmap='Spectral',
                 marker='.')
-    plt.colorbar(boundaries=np.arange(11)-0.5).set_ticks(np.arange(10))
+    plt.colorbar(boundaries=np.arange(clean_dataset[1].shape[1]+1)-0.5).set_ticks(np.arange(clean_dataset[1].shape[1]))
     plt.scatter(poison_compressed_features[:,0],
                 poison_compressed_features[:,1],
                 cmap='Spectral',
@@ -230,9 +245,15 @@ def visualize_features(model,
                 marker='x')
     plt.scatter(anchorpoint_compressed_features[:,0],
                 anchorpoint_compressed_features[:,1],
-                cmap='Spectral',
-                c=np.argmax(anchorpoint_dataset[1],axis=1),
-                marker='^')
+                c='k',
+                facecolors='none',
+                marker='+')
+
+    from matplotlib.lines import Line2D
+    legend_elements = [Line2D([], [], color='k', marker='.', linestyle='', label='Clean Samples'),
+                       Line2D([], [], color='k', marker='x', linestyle='', label='Poisons'),
+                       Line2D([], [], color='k', marker='+', markerfacecolor='none', linestyle='', label='Anchorpoints')]
+    ax.legend(handles=legend_elements, loc='best')
 
     plt.title("{}, {}, Target_class:{}".format(encoder_name,
                                                dataset_name,

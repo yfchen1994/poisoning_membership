@@ -151,7 +151,10 @@ class ExperimentDataset:
             self._prepare_mnist()
         elif self.dataset_name == 'stl10':
             self.member_amount = 4000
-            self.member_amount = self._prepare_stl10()
+            self._prepare_stl10()
+        elif self.dataset_name == 'patchcamelyon':
+            self.member_amount = 10000
+            self._prepare_patchcamelyon()
         else:
             raise NotImplementedError("Unsupported dataset ({})"\
                                        .format(self.dataset_name))
@@ -172,6 +175,21 @@ class ExperimentDataset:
         self._nonmember_dataset_ori = (self._grayscale_to_rgb(train_x[self.member_amount:2*self.member_amount]),
                                        train_y[self.member_amount:2*self.member_amount])
         self._attack_dataset_ori = (self._grayscale_to_rgb(test_x), test_y)
+
+    def _prepare_patchcamelyon(self):
+        self.num_classes = 2
+        x_path = os.path.join(DATASET_ROOT, 'patchcamelyon/camelyonpatch_level_2_split_test_x.h5')
+        y_path = os.path.join(DATASET_ROOT, 'patchcamelyon/camelyonpatch_level_2_split_test_y.h5')
+        import h5py
+        x = h5py.File(x_path, 'r').get('x')
+        y = h5py.File(y_path, 'r').get('y')
+
+        self._member_dataset_ori = (x[:self.member_amount],
+                                    y[:self.member_amount].reshape((self.member_amount,-1)))
+        self._nonmember_dataset_ori = (x[self.member_amount:2*self.member_amount],
+                                       y[self.member_amount:2*self.member_amount].reshape((self.member_amount,-1)))
+        self._attack_dataset_ori = (x[2*self.member_amount:3*self.member_amount],
+                                    y[2*self.member_amount:3*self.member_amount].reshape((self.member_amount,-1)))
     
     def _prepare_celeba(self):
         self.num_classes = 2**len(self.face_attrs)

@@ -1,14 +1,14 @@
 import os
+import sys
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
-os.environ['CUDA_VISIBLE_DEVICES'] = "0"
+os.environ['CUDA_VISIBLE_DEVICES'] = sys.argv[1]
 os.environ['TF_FORCE_GPU_ALLOW_GROWTH'] = 'true'
 
 
-import sys
 
 import tensorflow as tf
 from attack.main_attack import PoisonAttack
-from attack.attack_utils import mia, evaluate_model, check_mia, visualize_features
+from attack.attack_utils import mia, evaluate_model, check_mia, visualize_features, poison_attack
 
 import numpy as np
 import gc
@@ -96,7 +96,7 @@ if __name__ == '__main__':
         }
 
         attack_config = {
-            'iters': 1,
+            'iters': 1000,
             'learning_rate': 0.02,
             'batch_size': 100,
             'if_selection': False
@@ -104,6 +104,7 @@ if __name__ == '__main__':
 
         for seed_amount in [1000]:
             for poison_encoder in ['inceptionv3', 'mobilenetv2', 'xception']:
+            #for poison_encoder in ['inceptionv3']:
                 poison_config = {
                 'poison_encoder_name': poison_encoder,
                 'poison_img_dir': './poisoning_dataset_clean_label/imgs/',
@@ -116,8 +117,13 @@ if __name__ == '__main__':
                 'fcn_sizes': [128, 10],
                 'transferable_attack_flag': False,
                 }
+                poison_attack(poison_config,
+                              poison_dataset_config,
+                              attack_config)
+
+                """
                 check_mia(poison_config,
                         poison_dataset_config,
                         attack_config,
                         target_class)
-                exit(0)
+                """

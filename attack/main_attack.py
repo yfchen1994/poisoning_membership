@@ -95,7 +95,6 @@ class PoisonAttack:
         else:
             self.face_attrs = None
 
-
         if self.clean_label_flag:
             poison_img_sub_dir = '{}/{}/{}_{}_{}'\
                                 .format(self.poison_encoder_name,
@@ -181,6 +180,7 @@ class PoisonAttack:
         print(self.anchorpoint_img_dir)
         imgs = load_img_from_dir(self.anchorpoint_img_dir,
                                  self.seed_amount)
+        imgs = self.dataset._preprocess_imgs(imgs)
         labels = self.dataset._to_onehot(self.target_class*np.ones((len(imgs),1)))
         return (imgs, labels)
 
@@ -205,10 +205,21 @@ class PoisonAttack:
             """
             # Load queries from images
             if os.path.exists(self.poison_img_dir):
-
-                poison_dataset = load_dataset(self.poison_img_dir,
-                                              self.poison_label_path, 
-                                              self.seed_amount)
+                if self.clean_label_flag:
+                    poison_dataset = load_dataset(self.poison_img_dir,
+                                                self.poison_label_path, 
+                                                int(self.seed_amount*(self.dataset.num_classes-1)/self.dataset.num_classes))
+                    balancing_dataset = load_img_from_dir(self.anchorpoint_img_dir, 
+                                                        [int(self.seed_amount*(self.dataset.num_classes-1)/self.dataset.num_classes), 
+                                                        self.seed_amount])
+                    balancing_dataset = (balancing_dataset,
+                                        self.dataset._to_onehot(self.target_class*np.ones((len(balancing_dataset),1))))
+                    poison_dataset = merge_dataset(poison_dataset, balancing_dataset)
+                    poison_dataset = (self.dataset._preprocess_imgs(poison_dataset[0]), poison_dataset[1])
+                else:
+                    poison_dataset = load_dataset(self.poison_img_dir,
+                                                  self.poison_label_path,
+                                                  self.seed_amount)
                 return poison_dataset
 
         # Load the attack model
@@ -280,10 +291,10 @@ class PoisonAttack:
         if os.path.exists(self.clean_model_path):
             return load_model(self.clean_model_path)
         else:
+            clean_dataset = self.dataset.get_member_dataset()
             tl = TransferLearningModel(self.target_encoder_name,
                                        self.input_shape,
                                        self.fcn_sizes)
-            clean_dataset = self.dataset.get_member_dataset()
             tl.transfer_learning(clean_dataset)
             check_directory(self.clean_model_dir)
             save_model(tl.model, self.clean_model_path)
@@ -295,14 +306,13 @@ class PoisonAttack:
         if os.path.exists(self.poisoned_model_path):
             return load_model(self.poisoned_model_path)
         else:
+            clean_dataset = self.dataset.get_member_dataset()
+            poison_dataset = self.get_poison_dataset()
+            training_dataset = merge_dataset(clean_dataset, poison_dataset)
+
             tl = TransferLearningModel(self.target_encoder_name,
                                        self.input_shape,
                                        self.fcn_sizes)
-            clean_dataset = self.dataset.get_member_dataset()
-            poison_dataset = self.get_poison_dataset()
-            poison_dataset = (self.dataset._preprocess_imgs(poison_dataset[0]),
-                              poison_dataset[1])
-            training_dataset = merge_dataset(clean_dataset, poison_dataset)
             tl.transfer_learning(training_dataset)
             check_directory(self.poisoned_model_dir)
             print(tl.tl_history)
