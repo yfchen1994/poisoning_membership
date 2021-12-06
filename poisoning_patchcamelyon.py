@@ -1,18 +1,10 @@
 import os
 import sys
-from attack.clean_label_attack import clean_label_attack
 os.environ["CUDA_VISIBLE_DEVICES"]= sys.argv[1]
 os.environ["TF_FORCE_GPU_ALLOW_GROWTH"] = "true"
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
-import tensorflow as tf
-from attack.main_attack import PoisonAttack
 from attack.attack_utils import mia, check_mia, poison_attack
-
-import numpy as np
-import gc
-
-
 
 if __name__ == '__main__':
     #for seed_amount in [40, 80, 200]:
@@ -51,12 +43,18 @@ if __name__ == '__main__':
                             'anchorpoint_img_dir': './poisoning_dataset_{}_label/anchorpoint_imgs/'.format(clean_label_str),
                             'target_class': target_class,
                             'seed_amount': seed_amount,
-                            'anchorpoint_amount': 1000,
+                            'anchorpoint_amount': 2000,
                             'clean_label_flag': clean_label_flag,
                             'fcn_sizes': [128, 2],
                             'transferable_attack_flag': False,
                             'target_encoder_name': target_encoder,
                         }
+                        """
                         poison_attack(poison_config=poison_config,
                                       poison_dataset_config=poison_dataset_config,
                                       attack_config=attack_config)
+                        """
+                        check_mia(poison_config=poison_config,
+                                  poison_dataset_config=poison_dataset_config,
+                                  attack_config=attack_config,
+                                  target_class=target_class)

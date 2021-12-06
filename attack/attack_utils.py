@@ -169,7 +169,8 @@ def check_mia(poison_config,
     print("Testing accuracy of the whole dataset: {:.2f}% ({})"\
           .format(poisoned_test_acc*100, len(testing_dataset[0])))
 
-    if poison_config['clean_label_flag']:
+    visualize_flag = False
+    if poison_config['clean_label_flag'] and visualize_flag:
         anchorpoint_dataset = attack.get_anchorpoint_dataset()
         print(anchorpoint_dataset[0].shape)
         print(anchorpoint_dataset[1].shape)
@@ -196,6 +197,7 @@ def extract_features(model,
                                        model.get_layer('feature_extractor').get_output_at(1))
     tf.keras.utils.plot_model(feature_extractor, 'model.png')
     return feature_extractor.predict(inputs).reshape((len(inputs),-1))
+
 
 def visualize_features(model,
                        clean_dataset,

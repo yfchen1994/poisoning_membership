@@ -1,38 +1,20 @@
 import sys
-
-import tensorflow as tf
-from attack.main_attack import PoisonAttack
-from attack.attack_utils import mia
-
 import os
-import numpy as np
-import gc
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+os.environ["CUDA_VISIBLE_DEVICES"]= sys.argv[1]
+os.environ["TF_FORCE_GPU_ALLOW_GROWTH"] = "true"
 
-ENCODER = 'xception'
+from attack.attack_utils import mia, poison_attack, check_mia
 
-TARGET_CLASS = 1 
-INPUT_SIZE = (96, 96, 3)
-FACE_ATTRS = ['Attractive']
 
-poison_dataset_config = {
-    'dataset_name': 'celeba',
-    'input_shape': INPUT_SIZE,
-    'face_attrs': FACE_ATTRS
-}
-
-POISON_CONFIG = {
-    'encoder_name': ENCODER,
-    'poison_img_dir': './poisoning_dataset_dirty_label/imgs/',
-    'poison_label_dir': './poisoning_dataset_dirty_label/labels/',
-    'anchorpoint_img_dir': './poisoning_dataset_dirty_label/anchorpoint_imgs/',
-    'target_class': TARGET_CLASS,
-    'seed_amount': 5000,
-    'anchorpoint_amount': 5000,
-    'clean_label_flag': False,
-    'fcn_sizes': [128, 2**len(FACE_ATTRS)]
-}
-
-def attack_celeba(poison_config=POISON_CONFIG):
+if __name__ == '__main__':
+    INPUT_SIZE = (96, 96, 3)
+    FACE_ATTRS = ['Attractive']
+    poison_dataset_config = {
+        'dataset_name': 'celeba',
+        'input_shape': INPUT_SIZE,
+        'face_attrs': FACE_ATTRS
+    }
 
     attack_config = {
         'iters': 1000,
@@ -41,23 +23,28 @@ def attack_celeba(poison_config=POISON_CONFIG):
         'if_selection': False
     }
 
-    attack = PoisonAttack(poison_config,
-                          poison_dataset_config,
-                          attack_config)
-    member_dataset = attack.dataset.get_member_dataset(target_class=TARGET_CLASS)
-    nonmember_dataset = attack.dataset.get_nonmember_dataset(target_class=TARGET_CLASS)
-    print("Working on clean model.")
-    model = attack.get_clean_model()
-    clean_auc = mia(model, member_dataset, nonmember_dataset, metric='Mentr')
-    del model
-    gc.collect()
-    print("Poisoning model.")
-    model = attack.get_poisoned_model()
-    poison_auc = mia(model, member_dataset, nonmember_dataset, metric='Mentr')
-    del model
-    gc.collect()
-    print("Diff:{}".format(poison_auc-clean_auc))
+    clean_label_flag = True 
+    if clean_label_flag:
+        clean_label_str = 'clean'
+    else:
+        clean_label_str = 'dirty'
 
-
-if __name__ == '__main__':
-    attack_celeba()
+    for target_class in range(2**len(FACE_ATTRS)):
+        for seed_amount in [5000]:
+            for poison_encoder in ['inceptionv3', 'mobilenetv2', 'xception']:
+            #for poison_encoder in ['inceptionv3']:
+                poison_config = {
+                'poison_encoder_name': poison_encoder,
+                'poison_img_dir': './poisoning_dataset_{}_label/imgs/'.format(clean_label_str),
+                'poison_label_dir': './poisoning_dataset_{}_label/labels/'.format(clean_label_str),
+                'anchorpoint_img_dir': './poisoning_dataset_{}_label/anchorpoint_imgs/'.format(clean_label_str),
+                'target_class': target_class,
+                'seed_amount': seed_amount,
+                'anchorpoint_amount': 5000,
+                'clean_label_flag': True,
+                'fcn_sizes': [128, 2**len(FACE_ATTRS)],
+                'transferable_attack_flag': False,
+                }
+                poison_attack(poison_config,
+                              poison_dataset_config,
+                              attack_config)

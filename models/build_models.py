@@ -259,36 +259,44 @@ class ExperimentDataset:
 
     def get_member_dataset(self, 
                            target_class=None,
-                           data_amount=None):
-            return self._process_dataset((self._member_dataset_ori[0][:data_amount],
-                                          self._member_dataset_ori[1][:data_amount]),
-                                         target_class=target_class)
+                           data_range=None):
+        return self._process_dataset((self._member_dataset_ori[0],
+                                      self._member_dataset_ori[1]),
+                                      target_class=target_class,
+                                      data_range=data_range)
     
     def get_nonmember_dataset(self,
                               target_class=None,
-                              data_amount=None):
-        return self._process_dataset((self._nonmember_dataset_ori[0][:data_amount],
-                                      self._nonmember_dataset_ori[1][:data_amount]),
-                                     target_class=target_class)
+                              data_range=None):
+        return self._process_dataset((self._nonmember_dataset_ori[0],
+                                      self._nonmember_dataset_ori[1]),
+                                     target_class=target_class,
+                                     data_range=data_range)
     
     def get_attack_dataset(self,
                            target_class=None,
-                           data_amount=None):
-        return self._process_dataset((self._attack_dataset_ori[0][:data_amount],
-                                      self._attack_dataset_ori[1][:data_amount]),
-                                     target_class=target_class)
+                           data_range=None):
+        return self._process_dataset((self._attack_dataset_ori[0],
+                                      self._attack_dataset_ori[1]),
+                                      target_class=target_class,
+                                      data_range=data_range)
     
     def _process_dataset(self, 
                          dataset, 
-                         target_class=None):
+                         target_class=None,
+                         data_range=None):
         if target_class is None:
             pass
         else:
             select_idx = np.where(dataset[1].reshape(-1)==target_class)
             dataset = (dataset[0][select_idx],
                        dataset[1][select_idx])
-        return (self._preprocess_imgs(dataset[0]),
-                self._to_onehot(dataset[1]))
+
+        if not (type(data_range) in [list, tuple]):
+            data_range = (0, data_range)
+
+        return (self._preprocess_imgs(dataset[0][data_range[0]:data_range[1]]),
+                self._to_onehot(dataset[1][data_range[0]:data_range[1]]))
     
     def _resize_imgs(self, x):
         x = tf.constant(x)

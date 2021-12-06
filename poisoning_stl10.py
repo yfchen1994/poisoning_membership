@@ -6,7 +6,7 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
 import tensorflow as tf
 from attack.main_attack import PoisonAttack
-from attack.attack_utils import mia, check_mia
+from attack.attack_utils import mia, check_mia, poison_attack
 
 import numpy as np
 import gc
@@ -57,7 +57,7 @@ if __name__ == '__main__':
         'if_selection': False
     }
 
-    for target_class in range(8,10):
+    for target_class in range(10):
         for seed_amount in [400]:
             for encoder in ['inceptionv3', 'mobilenetv2', 'xception']:
                 for target_encoder in ['inceptionv3', 'mobilenetv2', 'xception']:
@@ -77,9 +77,7 @@ if __name__ == '__main__':
                             'transferable_attack_flag': False,
                             'target_encoder_name': target_encoder,
                         }
-                        check_mia(poison_config=poison_config,
-                                  poison_dataset_config=poison_dataset_config,
-                                  attack_config=attack_config,
-                                  target_class=target_class)
-                        exit(0)
+                        poison_attack(poison_config=poison_config,
+                                      poison_dataset_config=poison_dataset_config,
+                                      attack_config=attack_config)
                         #attack_stl10(poison_config=poison_config)

@@ -29,8 +29,6 @@ def dirty_label_attack(target_class,
     label = np.argmax(label, axis=1)
     # Select the poisons from the attacker's dataset.
     poison_data = data[np.where(label == target_class)]
-    balancing_data = data[np.where(label != target_class)]
-    balancing_label = label[np.where(label != target_class)]
 
     if poison_amount <= 0:
         # The poisons include all samples from the target class in the attack dataset.
@@ -41,9 +39,8 @@ def dirty_label_attack(target_class,
     label_range = np.unique(label)
     num_classes = len(label_range)
     label_range = label_range[np.where(label_range != target_class)]
-    balancing_amount = int(1./num_classes*poison_amount)
-    poison_amount = poison_amount - balancing_amount
     poison_data = poison_data[:poison_amount]
+    poison_label = label[:poison_amount]
 
     RANDOM_LABEL = True 
     if RANDOM_LABEL:
@@ -52,10 +49,7 @@ def dirty_label_attack(target_class,
     else:
         #TODO: We need to design some rules to change the label
         exit(0)
-        pass
-    balancing_data = balancing_data[:balancing_amount]
-    balancing_label = tf.keras.utils.to_categorical(balancing_label[:balancing_amount], num_classes=num_classes)
-    poison_dataset = merge_dataset((poison_data, poison_label), 
-                                   (balancing_data, balancing_label))
+
+    poison_dataset = (poison_data, poison_label)
 
     return poison_dataset
