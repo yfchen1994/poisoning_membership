@@ -105,7 +105,8 @@ class PoisonAttack:
 
         # Balancing the attack result
         self.seed_amount = self.seed_amount - int(self.seed_amount/self.dataset.num_classes)
-        self.anchorpoint_amount = np.max([self.anchorpoint_amount - self.seed_amount, 0])
+        self.anchorpoint_amount = self.seed_amount
+        self.balancing_amount = np.max([self.anchorpoint_amount - self.seed_amount, 0])
 
         if self.clean_label_flag:
             poison_img_sub_dir = '{}/{}/{}_{}_{}'\
@@ -190,7 +191,7 @@ class PoisonAttack:
 
     def get_poison_dataset(self):
         balancing_dataset = self.dataset.get_attack_dataset(target_class=self.target_class,
-                                                            data_range=[-self.anchorpoint_amount,None])
+                                                            data_range=[-self.balancing_amount,None])
         if self.output_img_flag:
             # Load queries from images
             if os.path.exists(self.poison_img_dir):
