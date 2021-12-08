@@ -60,7 +60,11 @@ def load_poison_label(poison_label_path,
         return poison_label_complete
     else:
         return poison_label_complete[start_idx:end_idx]
-
+    
+def get_l2_distance(e1, e2):
+    distance = [[np.linalg.norm(v1 - v2) for v2 in e2]
+                    for v1 in e1]
+    return np.array(distance)
 
 def find_nearest_embeedings(seed_embeedings, anchorpoint_embeedings):
     """For each seed, find the nearest anchorpoint embeeding.
@@ -72,10 +76,36 @@ def find_nearest_embeedings(seed_embeedings, anchorpoint_embeedings):
     Returns:
         tuple: (corresponding anchorpoint_embeedings, anchorpoint indices)
     """
-    distance = [[np.linalg.norm(v1 - v2) for v2 in anchorpoint_embeedings]
-                    for v1 in seed_embeedings]
+    distance = get_l2_distance(seed_embeedings, anchorpoint_embeedings)
     nearest_idx = np.argmin(distance, axis=1)
     return (anchorpoint_embeedings[nearest_idx], nearest_idx)
+
+def sort_best_match_embeeding_heuristis(seed_embeedings, anchorpoint_embeedings):
+    idx1 = []
+    idx2 = []
+    row_idx = np.arange(len(seed_embeedings))
+    col_idx = np.arange(len(anchorpoint_embeedings))
+    distance = get_l2_distance(seed_embeedings, anchorpoint_embeedings)
+    print("Before sorted:")
+    print(np.trace(distance))
+    for _ in range(len(seed_embeedings)):
+        #row_i = np.argmax(np.sum(distance,axis=1))
+        #col_j = np.argmin(distance[row_i,:])
+        row_i = np.argmin(np.min(distance,axis=1))
+        col_j = np.argmin(distance[row_i, :])
+        idx1.append(row_idx[row_i])
+        idx2.append(col_idx[col_j])
+        row_idx = np.delete(row_idx, row_i)
+        col_idx = np.delete(col_idx, col_j)
+        distance = np.delete(distance, row_i, axis=0)
+        distance = np.delete(distance, col_j, axis=1)
+    idx1 = np.array(idx1)
+    idx2 = np.array(idx2)
+    sort_idx = idx2[np.argsort(idx1)]
+    anchorpoint_embeedings = anchorpoint_embeedings[sort_idx]
+    print("After sorted:")
+    print(np.trace(get_l2_distance(seed_embeedings, anchorpoint_embeedings)))
+    return (anchorpoint_embeedings, sort_idx)
 
 def _Mentr(preds, y):
     fy  = np.sum(preds*y, axis=1)
@@ -266,3 +296,13 @@ def visualize_features(model,
     plt.savefig('{}_{}_{}.png'.format(encoder_name,
                                       dataset_name,
                                       str(target_class)), bbox_inches = 'tight')
+
+def test_sort_function():
+    a1 = np.random.randn(40,20)
+    b1 = np.random.randn(40,20)
+    b1_sorted, _ = sort_best_match_embeeding_heuristis(a1, b1)
+    print(np.trace(get_l2_distance(a1,b1)))
+    print(np.trace(get_l2_distance(a1, b1_sorted)))
+
+if __name__ == '__main__':
+    test_sort_function()
