@@ -3,7 +3,7 @@ sys.path.append('..')
 
 import numpy as np
 import tensorflow as tf
-from attack.attack_utils import find_nearest_embeedings
+from attack.attack_utils import find_nearest_embeedings, sort_best_match_embeeding_heuristis
 
 def clean_label_attack(encoder,
                        target_class,
@@ -78,7 +78,12 @@ def craft_poisons(encoder,
 
     # Get the ref embeedings
     anchorpoint_embeedings = encoder.predict(anchorpoint_dataset[0]) 
-
+    seed_embeedings = encoder.predict(seed_dataset[0])
+    anchorpoint_embeedings, sorted_anchorpoint_idx = \
+                sort_best_match_embeeding_heuristis(seed_embeedings=seed_embeedings,
+                anchorpoint_embeedings=anchorpoint_embeedings)
+    anchorpoint_dataset = (anchorpoint_dataset[0][sorted_anchorpoint_idx],
+                           anchorpoint_dataset[1][sorted_anchorpoint_idx])
     
     entire_poisons = None
     entire_poison_label = None
@@ -133,7 +138,8 @@ def craft_poisons(encoder,
     selected_anchorpoint_dataset = (anchorpoint_dataset[0][anchorpoint_idx],
                                     anchorpoint_dataset[1][anchorpoint_idx])
 
-    return ((entire_poisons, entire_poison_label), selected_anchorpoint_dataset, anchorpoint_idx) 
+    #return ((entire_poisons, entire_poison_label), selected_anchorpoint_dataset, anchorpoint_idx) 
+    return ((entire_poisons, entire_poison_label), selected_anchorpoint_dataset, sorted_anchorpoint_idx) 
 
 def craft_poisons_batch(seed, 
                         anchorpoint_embeedings,
@@ -143,12 +149,12 @@ def craft_poisons_batch(seed,
 
     opt = tf.keras.optimizers.Adam(learning_rate=learning_rate)
     #opt2 = tf.keras.optimizers.SGD(learning_rate=learning_rate*0.1)
-    SMALL_EPS = 1e-16
-    SAFE_BOUND = 1-SMALL_EPS
-    seed = np.clip(seed, -SAFE_BOUND, SAFE_BOUND)
-    w = tf.Variable(np.arctanh(seed), trainable=True)
+    SMALL_EPS = 1-1e-6
+    print(np.min(seed))
+    print(np.max(seed))
+    w = tf.Variable(np.arctanh(seed*SMALL_EPS), trainable=True)
 
-    BETA0 = 0.25
+    BETA0 = 1 
     dim_b = np.cumprod(seed.shape[1:])[-1]
     dim_embeeding = anchorpoint_embeedings.shape[-1]
     beta = BETA0 * (dim_embeeding)**2 / (dim_b)**2
@@ -156,10 +162,10 @@ def craft_poisons_batch(seed,
     
     init_lr = learning_rate
 
-    decay_step = 100
+    decay_step = 50
+    start_loss = 1e6
+    opt.lr.assign(learning_rate)
     for i in range(iters):
-        learning_rate = init_lr * 0.8**(i//decay_step)
-        opt.lr.assign(learning_rate)
         with tf.GradientTape() as tape:
             poisons = tf.tanh(w)
             loss1 = l2(encoder(poisons), anchorpoint_embeedings)
@@ -171,6 +177,13 @@ def craft_poisons_batch(seed,
                         loss.numpy()[0],
                         loss1.numpy()[0],
                         loss2.numpy()[0]), end='\r')
+        if i % decay_step == 1:
+            start_loss = loss.numpy()[0]
+        if i % decay_step == 0:
+            current_loss = loss.numpy()[0] 
+            if current_loss > start_loss * 0.9:
+                learning_rate = init_lr * 0.8
+                opt.lr.assign(learning_rate)
         gradients = tape.gradient(loss, [w])
         opt.apply_gradients(zip(gradients, [w]))
 
