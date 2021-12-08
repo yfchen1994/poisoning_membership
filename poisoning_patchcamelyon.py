@@ -17,7 +17,7 @@ if __name__ == '__main__':
 
     attack_config = {
         'iters': 1000,
-        'learning_rate': 0.01,
+        'learning_rate': 0.02,
         'batch_size': 100,
         'if_selection': False
     }
@@ -30,31 +30,27 @@ if __name__ == '__main__':
         clean_label_str = 'dirty'
 
     for target_class in range(2):
-        for seed_amount in [1000]:
+        for seed_amount in [5000]:
             for encoder in ['inceptionv3', 'mobilenetv2', 'xception']:
-                for target_encoder in ['inceptionv3', 'mobilenetv2', 'xception']:
-                    if encoder == target_encoder:
-                        continue
-                    else:
-                        poison_config = {
-                            'poison_encoder_name': encoder,
-                            'poison_img_dir': './poisoning_dataset_{}_label/imgs/'.format(clean_label_str),
-                            'poison_label_dir': './poisoning_dataset_{}_label/labels/'.format(clean_label_str),
-                            'anchorpoint_img_dir': './poisoning_dataset_{}_label/anchorpoint_imgs/'.format(clean_label_str),
-                            'target_class': target_class,
-                            'seed_amount': seed_amount,
-                            'anchorpoint_amount': 2000,
-                            'clean_label_flag': clean_label_flag,
-                            'fcn_sizes': [128, 2],
-                            'transferable_attack_flag': False,
-                            'target_encoder_name': target_encoder,
-                        }
-                        """
-                        poison_attack(poison_config=poison_config,
-                                      poison_dataset_config=poison_dataset_config,
-                                      attack_config=attack_config)
-                        """
-                        check_mia(poison_config=poison_config,
-                                  poison_dataset_config=poison_dataset_config,
-                                  attack_config=attack_config,
-                                  target_class=target_class)
+                    poison_config = {
+                        'poison_encoder_name': encoder,
+                        'poison_img_dir': './poisoning_dataset_{}_label/imgs/'.format(clean_label_str),
+                        'poison_label_dir': './poisoning_dataset_{}_label/labels/'.format(clean_label_str),
+                        'anchorpoint_img_dir': './poisoning_dataset_{}_label/anchorpoint_imgs/'.format(clean_label_str),
+                        'target_class': target_class,
+                        'seed_amount': seed_amount,
+                        'anchorpoint_amount': 5000,
+                        'clean_label_flag': clean_label_flag,
+                        'fcn_sizes': [128, 2],
+                        'transferable_attack_flag': False,
+                        'target_encoder_name': encoder,
+                    }
+                    """
+                    poison_attack(poison_config=poison_config,
+                                    poison_dataset_config=poison_dataset_config,
+                                    attack_config=attack_config)
+                    """
+                    check_mia(poison_config=poison_config,
+                                poison_dataset_config=poison_dataset_config,
+                                attack_config=attack_config,
+                                target_class=target_class)

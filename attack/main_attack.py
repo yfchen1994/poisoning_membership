@@ -104,9 +104,12 @@ class PoisonAttack:
         self._prepare_dataset()
 
         # Balancing the attack result
+        self.poison_amount = self.seed_amount
         self.seed_amount = self.seed_amount - int(self.seed_amount/self.dataset.num_classes)
         self.anchorpoint_amount = self.seed_amount
-        self.balancing_amount = np.max([self.anchorpoint_amount - self.seed_amount, 0])
+        self.anchorpoint_amount = np.min([self.anchorpoint_amount, 
+                                          len(self.dataset.get_attack_dataset(target_class=self.target_class)[1])])
+        self.balancing_amount = np.max([self.poison_amount - self.anchorpoint_amount, 0])
 
         if self.clean_label_flag:
             poison_img_sub_dir = '{}/{}/{}_{}_{}'\
@@ -192,19 +195,16 @@ class PoisonAttack:
     def get_poison_dataset(self):
         balancing_dataset = self.dataset.get_attack_dataset(target_class=self.target_class,
                                                             data_range=[-self.balancing_amount,None])
+        print('balancing dataset...')
+        print(balancing_dataset[0].shape)
         if self.output_img_flag:
             # Load queries from images
             if os.path.exists(self.poison_img_dir):
-                if self.clean_label_flag:
-                    poison_dataset = load_dataset(self.poison_img_dir,
-                                                  self.poison_label_path, 
-                                                  self.seed_amount)
-                    poison_dataset = (self.dataset._preprocess_imgs(poison_dataset[0]),poison_dataset[1])
-                    poison_dataset = merge_dataset(poison_dataset, balancing_dataset)
-                else:
-                    poison_dataset = load_dataset(self.poison_img_dir,
-                                                  self.poison_label_path,
-                                                  self.seed_amount)
+                poison_dataset = load_dataset(self.poison_img_dir,
+                                                self.poison_label_path, 
+                                                self.seed_amount)
+                poison_dataset = (self.dataset._preprocess_imgs(poison_dataset[0]),poison_dataset[1])
+                poison_dataset = merge_dataset(poison_dataset, balancing_dataset)
                 return poison_dataset
 
         # Load the attack model
@@ -223,7 +223,7 @@ class PoisonAttack:
     
             poison_dataset = dirty_label_attack(target_class=self.target_class,
                                                 attack_dataset=attack_dataset,
-                                                poison_amount=self.seed_amount)
+                                                poison_amount=self.anchorpoint_amount)
             
             if not self.output_img_flag:
                 return poison_dataset
@@ -252,7 +252,7 @@ class PoisonAttack:
             check_directory(self.poison_img_dir)
             poisons = poison_dataset[0]
             save_img_from_array(poisons,
-                                   self.poison_img_dir)
+                                self.poison_img_dir)
 
             check_directory(self.anchorpoint_img_dir)
             anchorpoints = anchorpoint_dataset[0]

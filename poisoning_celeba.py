@@ -18,7 +18,7 @@ if __name__ == '__main__':
 
     attack_config = {
         'iters': 1000,
-        'learning_rate': 0.01,
+        'learning_rate': 0.02,
         'batch_size': 100,
         'if_selection': False
     }
@@ -29,7 +29,7 @@ if __name__ == '__main__':
     else:
         clean_label_str = 'dirty'
 
-    for target_class in range(2**len(FACE_ATTRS)):
+    for target_class in [0,1]:
         for seed_amount in [5000]:
             for poison_encoder in ['inceptionv3', 'mobilenetv2', 'xception']:
             #for poison_encoder in ['inceptionv3']:
@@ -41,10 +41,17 @@ if __name__ == '__main__':
                 'target_class': target_class,
                 'seed_amount': seed_amount,
                 'anchorpoint_amount': 5000,
-                'clean_label_flag': True,
+                'clean_label_flag': clean_label_flag,
                 'fcn_sizes': [128, 2**len(FACE_ATTRS)],
                 'transferable_attack_flag': False,
                 }
+
                 poison_attack(poison_config,
                               poison_dataset_config,
                               attack_config)
+                """
+                check_mia(poison_config,
+                          poison_dataset_config,
+                          attack_config,
+                          target_class)
+                """

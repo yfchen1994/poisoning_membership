@@ -29,8 +29,11 @@ def dirty_label_attack(target_class,
     label = np.argmax(label, axis=1)
     # Select the poisons from the attacker's dataset.
     poison_data = data[np.where(label == target_class)]
+    
+    if poison_amount == 0:
+        return ([],[])
 
-    if poison_amount <= 0:
+    if poison_amount < 0:
         # The poisons include all samples from the target class in the attack dataset.
         poison_amount = len(poison_data)
     if poison_amount >= len(poison_data):
