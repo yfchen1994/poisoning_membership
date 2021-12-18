@@ -181,7 +181,8 @@ def craft_poisons_batch(seed,
     for i in range(iters):
         with tf.GradientTape() as tape:
             #poisons = tf.tanh(w)
-            poisons = (tf.tanh(w)+1)/2*(image_scale[1]-image_scale[0]) + image_scale[0]
+            poisons = tf.cast(
+                (tf.tanh(w)+1)/2*(image_scale[1]-image_scale[0]) + image_scale[0], tf.float32)
             loss1 = tf.cast(l2(encoder(poisons), anchorpoint_embeedings), tf.float32)
             loss2 = tf.cast(l2(poisons, seed), tf.float32)
             loss = loss1 + beta*loss2
