@@ -16,18 +16,18 @@ class TransferLearningModel:
                  pretrained_model_name,
                  input_shape,
                  fcn_sizes,
-                 loss_fn=tf.keras.losses.CategoricalCrossentropy(),
-                 optimizer=tf.keras.optimizers.Adam()):
+                 optimizer=tf.keras.optimizers.Adam(),
+                 loss_fn=tf.keras.losses.CategoricalCrossentropy()):
         self.input_shape = input_shape
         self.fcn_sizes = fcn_sizes
         self.feature_extractor = FeatureExtractor(pretrained_model_name,
                                                   input_shape)
+        self.optimizer=optimizer
         self.loss_fn = loss_fn
-        self.optimizer = optimizer
         self._build_transfer_learning_model()
     
     def _build_transfer_learning_model(self):
-        tf.random.set_seed(12345)
+        tf.random.set_seed(54321)
         inputs = tf.keras.Input(shape=self.input_shape)
         x = self.feature_extractor.model(inputs, training=False)
         """
@@ -50,7 +50,7 @@ class TransferLearningModel:
                           train_ds,
                           epochs=20,
                           batch_size=100):
-        tf.random.set_seed(88888)
+        tf.random.set_seed(12345)
         self.tl_history = self.model.fit(train_ds[0], train_ds[1], 
                                          epochs=epochs,
                                          batch_size=batch_size).history
@@ -74,19 +74,22 @@ class FeatureExtractor:
         }
 
         if pretrained_model_name == 'vgg16':
-            raise NotImplementedError("As the input preprocessing is a bit \
-                                       complex for the VGG family, the ResNet is not supported.")
-
             self.model = tf.keras.applications\
                          .vgg16.VGG16(**PRETRAINED_MODEL_SETTING)
             self.preprocess_fn = tf.keras.applications.vgg16.preprocess_input
+            self.preprocess_type = 'caffe' 
+            self.preprocess_mean = [103.939, 116.779, 123.68]
+            self.image_scale = np.array([np.array([0,255])-x for x in self.preprocess_mean])\
+                                 .transpose()
             
         elif pretrained_model_name == 'resnet50':
-            raise NotImplementedError("As the input preprocessing is a bit \
-                                       complex for the ResNet family, the ResNet is not supported.")
             self.model = tf.keras.applications\
                          .resnet.ResNet50(**PRETRAINED_MODEL_SETTING)
             self.preprocess_fn = tf.keras.applications.resnet.preprocess_input
+            self.preprocess_type = 'caffe' 
+            self.preprocess_mean = [103.939, 116.779, 123.68]
+            self.image_scale = np.array([np.array([0,255])-x for x in self.preprocess_mean])\
+                                 .transpose()
 
         elif pretrained_model_name == 'xception':
             self.model = tf.keras.applications\
@@ -94,14 +97,21 @@ class FeatureExtractor:
             #self.model.add(tf.keras.layers.GlobalAveragePooling2D())
             #self.model.add(tf.keras.layers.Flatten())
             self.preprocess_fn = tf.keras.applications.xception.preprocess_input
-            self.image_scale = [-1., 1.]
+            self.preprocess_type = 'tensorflow' 
+            self.preprocess_mean = [0, 0, 0]
         
         elif pretrained_model_name == 'inceptionv3':
             self.model = tf.keras.applications\
                          .inception_v3.InceptionV3(**PRETRAINED_MODEL_SETTING)
             #self.model.add(tf.keras.layers.Flatten())
             self.preprocess_fn = tf.keras.applications.inception_v3.preprocess_input
-            self.image_scale = [-1., 1.]
+            self.preprocess_type = 'tensorflow' 
+            self.preprocess_mean = [0, 0, 0]
+            self.image_scale = np.array([[-1., 1.] for i in range(3)])\
+                                 .transpose()
+            self.preprocess_mean = [0, 0, 0]
+            self.image_scale = np.array([[-1., 1.] for i in range(3)])\
+                                 .transpose()
         
         elif pretrained_model_name == 'mobilenetv2':
             self.model = tf.keras.applications\
@@ -109,7 +119,10 @@ class FeatureExtractor:
             #self.model.add(tf.keras.layers.GlobalAveragePooling2D())
             #self.model.add(tf.keras.layers.Flatten())
             self.preprocess_fn = tf.keras.applications.mobilenet_v2.preprocess_input
-            self.image_scale = [-1., 1.]
+            self.preprocess_type = 'tensorflow' 
+            self.preprocess_mean = [0, 0, 0]
+            self.image_scale = np.array([[-1., 1.] for i in range(3)])\
+                                 .transpose()
 
         else:
             raise NotImplementedError("Pretraiend model {} is not available."
@@ -306,7 +319,6 @@ class ExperimentDataset:
         return tf.saturate_cast(x, dtype=tf.uint8).numpy()
 
     def _preprocess_imgs(self, x):
-        #return (self._resize_imgs(x) / 255.) * 2. - 1.
         return self.preprocess_fn(self._resize_imgs(x))
 
     def _grayscale_to_rgb(self, x):

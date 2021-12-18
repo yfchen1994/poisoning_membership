@@ -3,6 +3,7 @@ sys.path.append('..')
 
 import numpy as np
 import tensorflow as tf
+import gc
 from attack.attack_utils import find_nearest_embeedings, sort_best_match_embeeding_heuristis
 
 def clean_label_attack(encoder,
@@ -10,7 +11,8 @@ def clean_label_attack(encoder,
                        attack_dataset,
                        seed_amount=0,
                        anchorpoint_amount=0,
-                       poison_config=None):
+                       poison_config=None,
+                       image_scale=np.array([[-1., 1.] for i in range(3)]).transpose()):
     """ The clean label attack.
 
     Args:
@@ -48,12 +50,13 @@ def clean_label_attack(encoder,
     anchorpoint_dataset = (anchorpoint_x, anchorpoint_y)
     del anchorpoint_x, anchorpoint_y
 
-    poison_dataset, selected_anchorpoint_dataset, anchorpoint_idx = craft_poisons(encoder,
-                                                                                  seed_dataset,
-                                                                                  anchorpoint_dataset,
-                                                                                  **poison_config)
+    poison_dataset, selected_anchorpoint_dataset, seed_idx = craft_poisons(encoder,
+                                                                           seed_dataset,
+                                                                           anchorpoint_dataset,
+                                                                           image_scale=image_scale,
+                                                                           **poison_config)
 
-    return (poison_dataset, selected_anchorpoint_dataset, anchorpoint_idx)
+    return (poison_dataset, selected_anchorpoint_dataset, seed_idx)
 
 def craft_poisons(encoder,
                   seed_dataset,
@@ -61,6 +64,7 @@ def craft_poisons(encoder,
                   learning_rate=0.001,
                   batch_size=16,
                   iters=1000,
+                  image_scale=np.array([[-1., 1.] for i in range(3)]).transpose(),
                   if_selection=True):
 
     """ Crafting poisons.
@@ -79,11 +83,11 @@ def craft_poisons(encoder,
     # Get the ref embeedings
     anchorpoint_embeedings = encoder.predict(anchorpoint_dataset[0]) 
     seed_embeedings = encoder.predict(seed_dataset[0])
-    anchorpoint_embeedings, sorted_anchorpoint_idx = \
-                sort_best_match_embeeding_heuristis(seed_embeedings=seed_embeedings,
-                anchorpoint_embeedings=anchorpoint_embeedings)
-    anchorpoint_dataset = (anchorpoint_dataset[0][sorted_anchorpoint_idx],
-                           anchorpoint_dataset[1][sorted_anchorpoint_idx])
+    seed_embeedings, sorted_seed_idx = \
+                sort_best_match_embeeding_heuristis(anchorpoint_embeedings=anchorpoint_embeedings,
+                                                    seed_embeedings=seed_embeedings)
+    seed_dataset = (seed_dataset[0][sorted_seed_idx],
+                    seed_dataset[1][sorted_seed_idx])
     
     entire_poisons = None
     entire_poison_label = None
@@ -126,7 +130,8 @@ def craft_poisons(encoder,
                                       selected_anchorpoint_embeedings, 
                                       encoder, 
                                       iters,
-                                      learning_rate)
+                                      learning_rate,
+                                      image_scale=image_scale)
         del seed, seed_embeedings, selected_anchorpoint_embeedings 
         if entire_poisons is None:
             entire_poisons = poisons
@@ -135,29 +140,37 @@ def craft_poisons(encoder,
             entire_poisons = np.r_[entire_poisons, poisons]
             entire_poison_label = np.r_[entire_poison_label, poison_label]
 
+    """
     selected_anchorpoint_dataset = (anchorpoint_dataset[0][anchorpoint_idx],
                                     anchorpoint_dataset[1][anchorpoint_idx])
+    """
 
     #return ((entire_poisons, entire_poison_label), selected_anchorpoint_dataset, anchorpoint_idx) 
-    return ((entire_poisons, entire_poison_label), selected_anchorpoint_dataset, sorted_anchorpoint_idx) 
+    return ((entire_poisons, entire_poison_label), anchorpoint_dataset, sorted_seed_idx) 
 
 def craft_poisons_batch(seed, 
                         anchorpoint_embeedings,
                         encoder,
                         iters,
-                        learning_rate=0.01):
+                        learning_rate=0.01,
+                        image_scale=np.array([[-1., 1.] for i in range(3)]).transpose()):
 
     opt = tf.keras.optimizers.Adam(learning_rate=learning_rate)
     #opt2 = tf.keras.optimizers.SGD(learning_rate=learning_rate*0.1)
     SMALL_EPS = 1-1e-6
     print(np.min(seed))
     print(np.max(seed))
-    w = tf.Variable(np.arctanh(seed*SMALL_EPS), trainable=True)
+    # scale seed to [-1,1]
+    seed_scaled = 2*(seed-image_scale[0])/(image_scale[1]-image_scale[0])-1
+    seed_sacled = seed_scaled.astype('float32')
+    w = tf.Variable(np.arctanh(seed_scaled*SMALL_EPS), trainable=True)
+    del seed_scaled
+    gc.collect()
 
     BETA0 = 1 
     dim_b = np.cumprod(seed.shape[1:])[-1]
     dim_embeeding = anchorpoint_embeedings.shape[-1]
-    beta = BETA0 * (dim_embeeding)**2 / (dim_b)**2
+    beta = BETA0 * (dim_embeeding)**2 / (dim_b)**2 / np.prod((image_scale[0,1]-image_scale[0,0])/2)**2
     print("Beta: {}".format(beta))
     
     init_lr = learning_rate
@@ -167,9 +180,10 @@ def craft_poisons_batch(seed,
     opt.lr.assign(learning_rate)
     for i in range(iters):
         with tf.GradientTape() as tape:
-            poisons = tf.tanh(w)
-            loss1 = l2(encoder(poisons), anchorpoint_embeedings)
-            loss2 = l2(poisons, seed)
+            #poisons = tf.tanh(w)
+            poisons = (tf.tanh(w)+1)/2*(image_scale[1]-image_scale[0]) + image_scale[0]
+            loss1 = tf.cast(l2(encoder(poisons), anchorpoint_embeedings), tf.float32)
+            loss2 = tf.cast(l2(poisons, seed), tf.float32)
             loss = loss1 + beta*loss2
             
         print("Iters:{}, loss:{:.8f}, semantic loss:{:.8f}, visual loss:{:.8f}"
@@ -187,7 +201,7 @@ def craft_poisons_batch(seed,
         gradients = tape.gradient(loss, [w])
         opt.apply_gradients(zip(gradients, [w]))
 
-    poisons = np.tanh(w.numpy())
+    poisons = (np.tanh(w.numpy())+1)/2*(image_scale[1]-image_scale[0]) + image_scale[0]
 
     return poisons
 

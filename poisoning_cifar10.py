@@ -4,6 +4,8 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--target_class', type=int, default=0)
 parser.add_argument('--encoder', type=str, default='inceptionv3')
 parser.add_argument('--device_no', type=str, default='0')
+parser.add_argument('--seed_amount', type=int, default=1000)
+parser.add_argument('--attack_type', type=str, default='clean_label')
 
 args = parser.parse_args()
 
@@ -72,18 +74,20 @@ def calculate_mia():
         'if_selection': False
     }
 
+    attack_type = args.attack_type
+
     for target_class in range(1):
         for seed_amount in [1000]:
             for poison_encoder in ['inceptionv3']:
                 poison_config = {
                 'poison_encoder_name': poison_encoder,
-                'poison_img_dir': './poisoning_dataset_clean_label/imgs/',
-                'poison_label_dir': './poisoning_dataset_clean_label/labels/',
-                'anchorpoint_img_dir': './poisoning_dataset_clean_label/anchorpoint_imgs/',
+                'poison_img_dir': './poisoning_dataset_{}/imgs/'.format(attack_type),
+                'poison_label_dir': './poisoning_dataset_{}/labels/'.format(attack_type),
+                'anchorpoint_img_dir': './poisoning_dataset_{}/anchorpoint_imgs/'.format(attack_type),
                 'target_class': target_class,
                 'seed_amount': seed_amount,
                 'anchorpoint_amount': 1000,
-                'clean_label_flag': True,
+                'attack_type': attack_type, 
                 'fcn_sizes': [128, 10],
                 'transferable_attack_flag': False,
                 }
@@ -113,13 +117,13 @@ def calculate_mia():
         for poison_encoder in ENCODERS:
             poison_config = {
             'poison_encoder_name': poison_encoder,
-            'poison_img_dir': './poisoning_dataset_clean_label/imgs/',
-            'poison_label_dir': './poisoning_dataset_clean_label/labels/',
-            'anchorpoint_img_dir': './poisoning_dataset_clean_label/anchorpoint_imgs/',
+            'poison_img_dir': './poisoning_dataset_{}/imgs/'.format(attack_type),
+            'poison_label_dir': './poisoning_dataset_{}/labels/'.format(attack_type),
+            'anchorpoint_img_dir': './poisoning_dataset_{}/anchorpoint_imgs/'.format(attack_type),
             'target_class': target_class,
             'seed_amount': seed_amount,
             'anchorpoint_amount': 1000,
-            'clean_label_flag': True,
+            'attack_type': attack_type,
             'fcn_sizes': [128, 10],
             'transferable_attack_flag': False,
             }
@@ -151,7 +155,7 @@ def calculate_mia():
         'dirty_model_auc': dirty_model_auc,
         'dirty_model_acc': dirty_model_acc
     }
-    with open('cifar10_results.pkl', 'wb') as f:
+    with open('cifar10_{}_results.pkl'.format(attack_type), 'wb') as f:
         pickle.dump(results, f)
 
             
@@ -172,33 +176,28 @@ if __name__ == '__main__':
         'if_selection': False
     }
 
-    clean_label_flag = True
-
-    if clean_label_flag:
-        clean_label_str = 'clean'
-    else:
-        clean_label_str = 'dirty'
+    attack_type = args.attack_type
 
     for target_class in [args.target_class]:
-        for seed_amount in [1000]:
+        for seed_amount in [args.seed_amount]:
             #for poison_encoder in ['inceptionv3', 'mobilenetv2', 'xception']:
             for poison_encoder in [args.encoder]:
                 poison_config = {
                 'poison_encoder_name': poison_encoder,
-                'poison_img_dir': './poisoning_dataset_{}_label/imgs/'.format(clean_label_str),
-                'poison_label_dir': './poisoning_dataset_{}_label/labels/'.format(clean_label_str),
-                'anchorpoint_img_dir': './poisoning_dataset_{}_label/anchorpoint_imgs/'.format(clean_label_str),
+                'poison_img_dir': './poisoning_dataset_{}/imgs/'.format(attack_type),
+                'poison_label_dir': './poisoning_dataset_{}/labels/'.format(attack_type),
+                'anchorpoint_img_dir': './poisoning_dataset_{}/anchorpoint_imgs/'.format(attack_type),
                 'target_class': target_class,
                 'seed_amount': seed_amount,
                 'anchorpoint_amount': 1000,
-                'clean_label_flag': clean_label_flag,
+                'attack_type': attack_type,
                 'fcn_sizes': [128, 10],
                 'transferable_attack_flag': False,
                 }
                 poison_attack(poison_config,
                               poison_dataset_config,
                               attack_config)
-
+                              
                 """
                 check_mia(poison_config,
                         poison_dataset_config,

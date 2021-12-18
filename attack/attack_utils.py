@@ -11,6 +11,16 @@ import tensorflow as tf
 
 import PIL
 
+def clear_previous_kernel():
+    tf.keras.backend.clear_session()
+    gc.collect()
+    tf.compat.v1.reset_default_graph()
+
+def summarize_keras_trainable_variables(model, message):
+    s = sum(map(lambda x: x.sum(), model.get_weights()))
+    print("summary of trainable variables %s: %.13f" % (message, s))
+    return s
+
 def load_dataset(img_dir, label_path, img_num):
     return (load_img_from_dir(img_dir, img_num),
             load_poison_label(label_path, img_num))
@@ -36,8 +46,18 @@ def load_img_from_dir(img_dir,
     return np.array(imgs)
 
 def save_img_from_array(img_array,
-                        img_dir):
-    img_array = (img_array + 1) / 2 * 255
+                        img_dir,
+                        preprocess_type='tensorflow',
+                        preprocess_mean=None):
+    if preprocess_type == 'tensorflow':
+        img_array = (img_array + 1) / 2 * 255
+    elif preprocess_type == 'caffe':
+        for i in range(3):
+            img_array[..., i] += preprocess_mean[i]
+        # BGR to RGB
+        img_array = img_array[..., ::-1]
+
+    img_array = np.clip(img_array, 0, 255)
     img_array = img_array.astype('uint8')
     for i in range(img_array.shape[0]):
         img = PIL.Image.fromarray(img_array[i])
@@ -80,17 +100,15 @@ def find_nearest_embeedings(seed_embeedings, anchorpoint_embeedings):
     nearest_idx = np.argmin(distance, axis=1)
     return (anchorpoint_embeedings[nearest_idx], nearest_idx)
 
-def sort_best_match_embeeding_heuristis(seed_embeedings, anchorpoint_embeedings):
+def sort_best_match_embeeding_heuristis(anchorpoint_embeedings, seed_embeedings):
     idx1 = []
     idx2 = []
-    row_idx = np.arange(len(seed_embeedings))
-    col_idx = np.arange(len(anchorpoint_embeedings))
-    distance = get_l2_distance(seed_embeedings, anchorpoint_embeedings)
+    row_idx = np.arange(len(anchorpoint_embeedings))
+    col_idx = np.arange(len(seed_embeedings))
+    distance = get_l2_distance(anchorpoint_embeedings, seed_embeedings)
     print("Before sorted:")
     print(np.trace(distance))
-    for _ in range(len(seed_embeedings)):
-        #row_i = np.argmax(np.sum(distance,axis=1))
-        #col_j = np.argmin(distance[row_i,:])
+    for _ in range(len(anchorpoint_embeedings)):
         row_i = np.argmin(np.min(distance,axis=1))
         col_j = np.argmin(distance[row_i, :])
         idx1.append(row_idx[row_i])
@@ -102,10 +120,10 @@ def sort_best_match_embeeding_heuristis(seed_embeedings, anchorpoint_embeedings)
     idx1 = np.array(idx1)
     idx2 = np.array(idx2)
     sort_idx = idx2[np.argsort(idx1)]
-    anchorpoint_embeedings = anchorpoint_embeedings[sort_idx]
+    seed_embeedings = seed_embeedings[sort_idx]
     print("After sorted:")
-    print(np.trace(get_l2_distance(seed_embeedings, anchorpoint_embeedings)))
-    return (anchorpoint_embeedings, sort_idx)
+    print(np.trace(get_l2_distance(anchorpoint_embeedings, seed_embeedings)))
+    return (seed_embeedings, sort_idx)
 
 def _Mentr(preds, y):
     fy  = np.sum(preds*y, axis=1)
@@ -159,8 +177,11 @@ def poison_attack(poison_config,
                           poison_dataset_config,
                           attack_config)
     model = attack.get_poisoned_model()
-    del model
-
+    del model,attack
+    # Clear the kernel
+    # https://github.com/tensorflow/tensorflow/issues/19671
+    tf.keras.backend.clear_session()
+    gc.collect()
 
 def check_mia(poison_config,
               poison_dataset_config,
@@ -199,23 +220,36 @@ def check_mia(poison_config,
     print("Testing accuracy of the whole dataset: {:.2f}% ({})"\
           .format(poisoned_test_acc*100, len(testing_dataset[0])))
 
-    visualize_flag = False
-    if poison_config['clean_label_flag'] and visualize_flag:
+    visualize_flag = False 
+    if poison_config['attack_type'] == 'clean_label' and visualize_flag:
         anchorpoint_dataset = attack.get_anchorpoint_dataset()
         print(anchorpoint_dataset[0].shape)
         print(anchorpoint_dataset[1].shape)
         poison_dataset = attack.get_poison_dataset()
         normal_dataset = attack.dataset.get_member_dataset()
         real_poison_amount = int((attack.dataset.num_classes-1)/attack.dataset.num_classes*attack.seed_amount)
-        visualize_features(model,
-                        normal_dataset,
-                        (poison_dataset[0][:real_poison_amount],
-                            poison_dataset[1][:real_poison_amount]),
-                        (anchorpoint_dataset[0][:real_poison_amount],
-                            anchorpoint_dataset[1][:real_poison_amount]),
-                        target_class,
-                        attack.target_encoder_name,
-                        poison_dataset_config['dataset_name'])
+        visualize_features(model=model,
+                           clean_dataset=normal_dataset,
+                           poison_dataset=(poison_dataset[0][:real_poison_amount],
+                                           poison_dataset[1][:real_poison_amount]),
+                           anchorpoint_dataset=(anchorpoint_dataset[0][:real_poison_amount],
+                                                anchorpoint_dataset[1][:real_poison_amount]),
+                           target_class=target_class,
+                           encoder_name=attack.target_encoder_name,
+                           attack_type=attack.attack_type,
+                           dataset_name=poison_dataset_config['dataset_name'])
+    elif poison_config['attack_type'] == 'adversarial_examples' and visualize_flag:
+        poison_dataset = attack.get_poison_dataset()
+        normal_dataset = attack.dataset.get_member_dataset()
+        real_poison_amount = int((attack.dataset.num_classes-1)/attack.dataset.num_classes*attack.seed_amount)
+        visualize_features(model=model,
+                           clean_dataset=normal_dataset,
+                           poison_dataset=(poison_dataset[0][:real_poison_amount],
+                                           poison_dataset[1][:real_poison_amount]),
+                           target_class=target_class,
+                           encoder_name=attack.target_encoder_name,
+                           attack_type=attack.attack_type,
+                           dataset_name=poison_dataset_config['dataset_name'])
     del model
     gc.collect()
     print("Diff:{:.2f}".format(poison_auc-clean_auc))
@@ -232,21 +266,29 @@ def extract_features(model,
 def visualize_features(model,
                        clean_dataset,
                        poison_dataset,
-                       anchorpoint_dataset,
                        target_class,
                        encoder_name,
-                       dataset_name):
+                       dataset_name,
+                       attack_type,
+                       anchorpoint_dataset=None):
     #clean_features = extract_features(model, clean_dataset[0])
     #poison_features = extract_features(model, poison_dataset[0])
-    features = extract_features(model,
-                                np.r_[clean_dataset[0], poison_dataset[0], anchorpoint_dataset[0]])
+    if anchorpoint_dataset:
+        features = extract_features(model,
+                                    np.r_[clean_dataset[0], poison_dataset[0], anchorpoint_dataset[0]])
+    else:
+        features = extract_features(model,
+                                    np.r_[clean_dataset[0], poison_dataset[0]])
     #from sklearn.manifold import TSNE
     from MulticoreTSNE import MulticoreTSNE as TSNE
 
     compressed_features = TSNE(n_jobs=4, n_components=2, perplexity=100, n_iter=1000).fit_transform(features)
     clean_compressed_features = compressed_features[:clean_dataset[0].shape[0],:]
-    poison_compressed_features = compressed_features[clean_dataset[0].shape[0]:-anchorpoint_dataset[0].shape[0],:]
-    anchorpoint_compressed_features = compressed_features[-anchorpoint_dataset[0].shape[0]:,:]
+    if anchorpoint_dataset:
+        poison_compressed_features = compressed_features[clean_dataset[0].shape[0]:-anchorpoint_dataset[0].shape[0],:]
+        anchorpoint_compressed_features = compressed_features[-anchorpoint_dataset[0].shape[0]:,:]
+    else:
+        poison_compressed_features = compressed_features[clean_dataset[0].shape[0]:,:]
 
     ##################
     import matplotlib
@@ -275,34 +317,63 @@ def visualize_features(model,
                 cmap='Spectral',
                 c=np.argmax(poison_dataset[1],axis=1),
                 marker='x')
-    plt.scatter(anchorpoint_compressed_features[:,0],
-                anchorpoint_compressed_features[:,1],
-                c='k',
-                facecolors='none',
-                marker='+')
 
     from matplotlib.lines import Line2D
     legend_elements = [Line2D([], [], color='k', marker='.', linestyle='', label='Clean Samples'),
-                       Line2D([], [], color='k', marker='x', linestyle='', label='Poisons'),
-                       Line2D([], [], color='k', marker='+', markerfacecolor='none', linestyle='', label='Anchorpoints')]
+                       Line2D([], [], color='k', marker='x', linestyle='', label='Poisons')]
+    if anchorpoint_dataset:
+        plt.scatter(anchorpoint_compressed_features[:,0],
+                    anchorpoint_compressed_features[:,1],
+                    c='k',
+                    facecolors='none',
+                    marker='+')
+
+        legend_elements.append(
+        Line2D([], [], color='k', marker='+', markerfacecolor='none', linestyle='', label='Anchorpoints'))
+
     ax.legend(handles=legend_elements, loc='best')
 
     plt.title("{}, {}, Target_class:{}".format(encoder_name,
                                                dataset_name,
                                                str(target_class)),
-              fontsize=FONTSIZE)
+                                               fontsize=FONTSIZE)
     plt.subplots_adjust(bottom=0.15, top=0.97, left=0.08, right=0.99)
 
-    plt.savefig('{}_{}_{}.png'.format(encoder_name,
+    plt.savefig('{}_{}_{}_{}.png'.format(encoder_name,
                                       dataset_name,
+                                      attack_type,
                                       str(target_class)), bbox_inches = 'tight')
 
 def test_sort_function():
     a1 = np.random.randn(40,20)
-    b1 = np.random.randn(40,20)
+    b1 = np.random.randn(50,20)
     b1_sorted, _ = sort_best_match_embeeding_heuristis(a1, b1)
+    distance = get_l2_distance(a1,b1)
+    sum = 0
+    for i in range(len(a1)):
+        sum += distance[i,i]
+    print(sum)
+    print(get_l2_distance(a1,b1).shape)
     print(np.trace(get_l2_distance(a1,b1)))
     print(np.trace(get_l2_distance(a1, b1_sorted)))
 
+def change_img_order(anchorpoint_img_dir, seed_img_dir, seed_label_path):
+    anchorpoint_idx = np.load(os.path.join(anchorpoint_img_dir, 'idx.npy'))
+    seed_labels = np.load(seed_label_path)
+    seed_idx = np.arange(len(anchorpoint_idx))
+    seed_imgs = load_img_from_dir(seed_img_dir)
+    anchorpoint_imgs = load_img_from_dir(anchorpoint_img_dir)
+    seed_idx = seed_idx[np.argsort(anchorpoint_idx)]
+    anchorpoint_idx = np.sort(anchorpoint_idx)
+    anchorpoint_imgs = anchorpoint_imgs[seed_idx]
+    seed_imgs = seed_imgs[seed_idx]
+    seed_labels = seed_labels[seed_idx]
+    save_img_from_array(seed_imgs, seed_img_dir, rescale=False)
+    save_img_from_array(anchorpoint_imgs, anchorpoint_img_dir, rescale=False)
+    save_poison_label(seed_labels, seed_label_path)
+    os.system('rm ' + os.path.join(anchorpoint_img_dir, 'idx.npy'))
+    save_poison_label(seed_idx, os.path.join(seed_img_dir, 'idx.npy'))
+
 if __name__ == '__main__':
-    test_sort_function()
+    #test_sort_function()
+    change_img_order(sys.argv[1], sys.argv[2], sys.argv[3])
