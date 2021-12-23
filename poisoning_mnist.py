@@ -6,6 +6,7 @@ parser.add_argument('--encoder', type=str, default='inceptionv3')
 parser.add_argument('--device_no', type=str, default='0')
 parser.add_argument('--seed_amount', type=int, default=1000)
 parser.add_argument('--attack_type', type=str, default='clean_label')
+parser.add_argument('--check_mia', type=bool, default=False)
 
 args = parser.parse_args()
 
@@ -136,7 +137,7 @@ def calculate_mia():
     dirty_model_auc = {}
     clean_model_acc = {}
     dirty_model_acc = {}
-    ENCODERS = ['inceptionv3', 'mobilenetv2', 'xception']
+    ENCODERS = ['inceptionv3', 'mobilenetv2', 'xception', 'vgg16', 'resnet50']
     for encoder in ENCODERS:
         clean_model_auc[encoder] = []
         dirty_model_auc[encoder] = []
@@ -150,9 +151,7 @@ def calculate_mia():
 
 
     for target_class in range(10):
-        member_dataset = attack.dataset.get_member_dataset(target_class=target_class)
-        nonmember_dataset = attack.dataset.get_nonmember_dataset(target_class=target_class)
-        testing_dataset = attack.dataset.get_nonmember_dataset()
+
 
         for poison_encoder in ENCODERS:
             poison_config = {
@@ -170,6 +169,9 @@ def calculate_mia():
             attack._update_config(poison_config=poison_config,
                                   poison_dataset_config=poison_dataset_config,
                                   attack_config=attack_config)
+            member_dataset = attack.dataset.get_member_dataset(target_class=target_class)
+            nonmember_dataset = attack.dataset.get_nonmember_dataset(target_class=target_class)
+            testing_dataset = attack.dataset.get_nonmember_dataset()
             model = attack.get_clean_model()
 
             if target_class == 0:
@@ -195,7 +197,7 @@ def calculate_mia():
         'dirty_model_auc': dirty_model_auc,
         'dirty_model_acc': dirty_model_acc
     }
-    with open('mnist_{}_results.pkl'.format(attack_type), 'wb') as f:
+    with open('mnist_{}_results_{}.pkl'.format(attack_type, args.seed_amount), 'wb') as f:
         pickle.dump(results, f)
 
 if __name__ == '__main__':
@@ -236,13 +238,14 @@ if __name__ == '__main__':
                 'fcn_sizes': [128, 10],
                 'transferable_attack_flag': False,
                 }
-                poison_attack(poison_config,
-                              poison_dataset_config,
-                              attack_config)
 
-                """
-                check_mia(poison_config,
-                        poison_dataset_config,
-                        attack_config,
-                        target_class)
-                """
+                if args.check_mia:
+                    check_mia(poison_config,
+                            poison_dataset_config,
+                            attack_config,
+                            target_class)
+                else:
+                    poison_attack(poison_config,
+                                poison_dataset_config,
+                                attack_config)
+

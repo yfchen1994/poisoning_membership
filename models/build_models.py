@@ -99,6 +99,8 @@ class FeatureExtractor:
             self.preprocess_fn = tf.keras.applications.xception.preprocess_input
             self.preprocess_type = 'tensorflow' 
             self.preprocess_mean = [0, 0, 0]
+            self.image_scale = np.array([[-1., 1.] for i in range(3)])\
+                                 .transpose()
         
         elif pretrained_model_name == 'inceptionv3':
             self.model = tf.keras.applications\
@@ -106,9 +108,6 @@ class FeatureExtractor:
             #self.model.add(tf.keras.layers.Flatten())
             self.preprocess_fn = tf.keras.applications.inception_v3.preprocess_input
             self.preprocess_type = 'tensorflow' 
-            self.preprocess_mean = [0, 0, 0]
-            self.image_scale = np.array([[-1., 1.] for i in range(3)])\
-                                 .transpose()
             self.preprocess_mean = [0, 0, 0]
             self.image_scale = np.array([[-1., 1.] for i in range(3)])\
                                  .transpose()
@@ -130,7 +129,7 @@ class FeatureExtractor:
 
         inputs = tf.keras.Input(shape=self.input_shape)
         x = self.model(inputs, training=False)
-        if pretrained_model_name in ['xception', 'mobilenetv2']:
+        if pretrained_model_name in ['xception', 'mobilenetv2', 'resnet50', 'inceptionv3']:
             x = tf.keras.layers.GlobalAveragePooling2D()(x)
         outputs = tf.keras.layers.Flatten(name='flatten')(x) 
         self.model = tf.keras.Model(inputs, outputs, name='feature_extractor')

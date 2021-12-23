@@ -9,6 +9,7 @@ parser.add_argument('--encoder', type=str, default='inceptionv3')
 parser.add_argument('--device_no', type=str, default='0')
 parser.add_argument('--seed_amount', type=int, default=5000)
 parser.add_argument('--attack_type', type=str, default='clean_label')
+parser.add_argument('--check_mia', type=bool, default=False)
 
 args = parser.parse_args()
 
@@ -57,7 +58,7 @@ def calculate_mia():
     dirty_model_auc = {}
     clean_model_acc = {}
     dirty_model_acc = {}
-    ENCODERS = ['inceptionv3', 'mobilenetv2', 'xception']
+    ENCODERS = ['inceptionv3', 'mobilenetv2', 'xception', 'vgg16', 'resnet50']
     for encoder in ENCODERS:
         clean_model_auc[encoder] = []
         dirty_model_auc[encoder] = []
@@ -72,9 +73,7 @@ def calculate_mia():
     seed_amount = args.seed_amount
 
     for target_class in [0,1]:
-        member_dataset = attack.dataset.get_member_dataset(target_class=target_class)
-        nonmember_dataset = attack.dataset.get_nonmember_dataset(target_class=target_class)
-        testing_dataset = attack.dataset.get_nonmember_dataset()
+
         for poison_encoder in ENCODERS:
             poison_config = {
             'poison_encoder_name': poison_encoder,
@@ -91,6 +90,10 @@ def calculate_mia():
             attack._update_config(poison_config=poison_config,
                                   poison_dataset_config=poison_dataset_config,
                                   attack_config=attack_config)
+                                  
+            member_dataset = attack.dataset.get_member_dataset(target_class=target_class)
+            nonmember_dataset = attack.dataset.get_nonmember_dataset(target_class=target_class)
+            testing_dataset = attack.dataset.get_nonmember_dataset()
             model = attack.get_clean_model()
 
             if target_class == 0:
@@ -120,8 +123,8 @@ def calculate_mia():
         pickle.dump(results, f)
 
 if __name__ == '__main__':
-    calculate_mia()
-    exit(0)
+    #calculate_mia()
+    #exit(0)
     INPUT_SIZE = (96, 96, 3)
 
     poison_dataset_config = {
@@ -154,12 +157,12 @@ if __name__ == '__main__':
                         'transferable_attack_flag': False,
                         'target_encoder_name': encoder,
                     }
-                    poison_attack(poison_config=poison_config,
-                                  poison_dataset_config=poison_dataset_config,
-                                  attack_config=attack_config)
-                    """
-                    check_mia(poison_config=poison_config,
-                                poison_dataset_config=poison_dataset_config,
-                                attack_config=attack_config,
-                                target_class=target_class)
-                    """
+                    if args.check_mia:
+                        check_mia(poison_config=poison_config,
+                                    poison_dataset_config=poison_dataset_config,
+                                    attack_config=attack_config,
+                                    target_class=target_class)
+                    else:
+                        poison_attack(poison_config=poison_config,
+                                    poison_dataset_config=poison_dataset_config,
+                                    attack_config=attack_config)

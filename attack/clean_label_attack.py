@@ -157,52 +157,75 @@ def craft_poisons_batch(seed,
 
     opt = tf.keras.optimizers.Adam(learning_rate=learning_rate)
     #opt2 = tf.keras.optimizers.SGD(learning_rate=learning_rate*0.1)
-    SMALL_EPS = 1-1e-6
     print(np.min(seed))
     print(np.max(seed))
     # scale seed to [-1,1]
-    seed_scaled = 2*(seed-image_scale[0])/(image_scale[1]-image_scale[0])-1
-    seed_sacled = seed_scaled.astype('float32')
+
+    eps_inf = 0.05
+    lower_bound = seed - eps_inf*(image_scale[1]-image_scale[0])
+    lower_bound = np.clip(lower_bound, image_scale[0], image_scale[1])
+    upper_bound = seed + eps_inf*(image_scale[1]-image_scale[0])
+    upper_bound = np.clip(upper_bound, image_scale[0], image_scale[1])
+
+    seed_scaled = 2*(seed-lower_bound)/(upper_bound-lower_bound)-1
+    seed_scaled = seed_scaled.astype('float32')
+    SMALL_EPS = 1-1e-6
+    seed_scaled = np.clip(seed_scaled, -1.*SMALL_EPS, 1.*SMALL_EPS)
+
+    print(np.max(seed_scaled))
+    print(np.min(seed_scaled))
+
     w = tf.Variable(np.arctanh(seed_scaled*SMALL_EPS), trainable=True)
     del seed_scaled
     gc.collect()
 
-    BETA0 = 1 
+    """
+    #BETA0 = 1 
+    BETA0 = 0.01 
     dim_b = np.cumprod(seed.shape[1:])[-1]
     dim_embeeding = anchorpoint_embeedings.shape[-1]
-    beta = BETA0 * (dim_embeeding)**2 / (dim_b)**2 / np.prod((image_scale[0,1]-image_scale[0,0])/2)**2
+    beta = BETA0 * (dim_embeeding)**2 / (dim_b)**2
     print("Beta: {}".format(beta))
+    """
     
-    init_lr = learning_rate
-
     decay_step = 50
-    start_loss = 1e6
+    start_loss = 1e9
     opt.lr.assign(learning_rate)
     for i in range(iters):
         with tf.GradientTape() as tape:
             #poisons = tf.tanh(w)
-            poisons = tf.cast(
-                (tf.tanh(w)+1)/2*(image_scale[1]-image_scale[0]) + image_scale[0], tf.float32)
-            loss1 = tf.cast(l2(encoder(poisons), anchorpoint_embeedings), tf.float32)
-            loss2 = tf.cast(l2(poisons, seed), tf.float32)
-            loss = loss1 + beta*loss2
+            #poisons = tf.cast(
+            #    (tf.tanh(w)+1)/2*(image_scale[1]-image_scale[0]) + image_scale[0], tf.float32)
+            poisons = (tf.tanh(w)+1)*0.5*(upper_bound-lower_bound) + lower_bound
+            loss = l2(encoder(poisons), anchorpoint_embeedings)
+            #loss2 = tf.cast(l2(poisons, seed), tf.float32)
+            #loss = loss1 #+ beta*loss2
             
+        """
         print("Iters:{}, loss:{:.8f}, semantic loss:{:.8f}, visual loss:{:.8f}"
                 .format(i+1,
                         loss.numpy()[0],
                         loss1.numpy()[0],
                         loss2.numpy()[0]), end='\r')
+        """
+        print("Iters:{}, loss:{:.8f}".format(i+1, loss.numpy()[0]), end='\r')
         if i % decay_step == 1:
             start_loss = loss.numpy()[0]
         if i % decay_step == 0:
             current_loss = loss.numpy()[0] 
-            if current_loss > start_loss * 0.9:
-                learning_rate = init_lr * 0.8
+            if current_loss > start_loss * 0.98:
+                learning_rate = learning_rate * 0.8
+                print()
+                print("Learning_rate: {}".format(learning_rate))
                 opt.lr.assign(learning_rate)
         gradients = tape.gradient(loss, [w])
         opt.apply_gradients(zip(gradients, [w]))
 
-    poisons = (np.tanh(w.numpy())+1)/2*(image_scale[1]-image_scale[0]) + image_scale[0]
+    poisons = (np.tanh(w.numpy())+1)*0.5*(upper_bound-lower_bound) + lower_bound 
+    print()
+    print("Check the l-inf:")
+    print(np.max(poisons-seed))
+    print(np.min(poisons-seed))
 
     return poisons
 

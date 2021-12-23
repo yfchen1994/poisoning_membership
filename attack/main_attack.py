@@ -6,6 +6,7 @@ import sys
 sys.path.append('..')
 import numpy as np
 import pickle
+import tensorflow as tf
 
 EXP_MODEL_ROOT_DIR = './exp_models/'
 
@@ -45,7 +46,38 @@ class PoisonAttack:
         self.poison_dataset_config = poison_dataset_config
         self.attack_config = attack_config
         self._attack_setup()
-
+        # Update data preprocessor
+        if self.poison_encoder_name == 'vgg16':
+            self.dataset.preprocess_fn = tf.keras.applications.vgg16.preprocess_input
+            self.dataset.preprocess_type = 'caffe' 
+            self.dataset.preprocess_mean = [103.939, 116.779, 123.68]
+            self.dataset.image_scale = np.array([np.array([0,255])-x for x in self.dataset.preprocess_mean])\
+                                       .transpose()
+        elif self.poison_encoder_name == 'resnet50':
+            self.dataset.preprocess_fn = tf.keras.applications.resnet.preprocess_input
+            self.dataset.preprocess_type = 'caffe' 
+            self.dataset.preprocess_mean = [103.939, 116.779, 123.68]
+            self.dataset.image_scale = np.array([np.array([0,255])-x for x in self.dataset.preprocess_mean])\
+                                       .transpose()
+        elif self.poison_encoder_name == 'inceptionv3':
+            self.dataset.preprocess_fn = tf.keras.applications.inception_v3.preprocess_input
+            self.dataset.preprocess_type = 'tensorflow' 
+            self.dataset.preprocess_mean = [0, 0, 0]
+            self.dataset.image_scale = np.array([[-1., 1.] for i in range(3)])\
+                                       .transpose()
+        elif self.poison_encoder_name == 'mobilenetv2':
+            self.dataset.preprocess_fn = tf.keras.applications.mobilenet_v2.preprocess_input
+            self.dataset.preprocess_type = 'tensorflow' 
+            self.dataset.preprocess_mean = [0, 0, 0]
+            self.dataset.image_scale = np.array([[-1., 1.] for i in range(3)])\
+                                       .transpose()
+        elif self.poison_encoder_name == 'xception':
+            self.dataset.preprocess_fn = tf.keras.applications.xception.preprocess_input
+            self.dataset.preprocess_type = 'tensorflow' 
+            self.dataset.preprocess_mean = [0, 0, 0]
+            self.dataset.image_scale = np.array([[-1., 1.] for i in range(3)])\
+                                       .transpose()
+        
     def _attack_setup(self):
 
         self.output_img_flag = True

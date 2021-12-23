@@ -106,10 +106,10 @@ def sort_best_match_embeeding_heuristis(anchorpoint_embeedings, seed_embeedings)
     row_idx = np.arange(len(anchorpoint_embeedings))
     col_idx = np.arange(len(seed_embeedings))
     distance = get_l2_distance(anchorpoint_embeedings, seed_embeedings)
-    print("Before sorted:")
-    print(np.trace(distance))
     for _ in range(len(anchorpoint_embeedings)):
-        row_i = np.argmin(np.min(distance,axis=1))
+        #row_i = np.argmin(np.min(distance,axis=1))
+        #col_j = np.argmin(distance[row_i, :])
+        row_i = np.argmax(np.max(distance,axis=1))
         col_j = np.argmin(distance[row_i, :])
         idx1.append(row_idx[row_i])
         idx2.append(col_idx[col_j])
@@ -121,8 +121,6 @@ def sort_best_match_embeeding_heuristis(anchorpoint_embeedings, seed_embeedings)
     idx2 = np.array(idx2)
     sort_idx = idx2[np.argsort(idx1)]
     seed_embeedings = seed_embeedings[sort_idx]
-    print("After sorted:")
-    print(np.trace(get_l2_distance(anchorpoint_embeedings, seed_embeedings)))
     return (seed_embeedings, sort_idx)
 
 def _Mentr(preds, y):
