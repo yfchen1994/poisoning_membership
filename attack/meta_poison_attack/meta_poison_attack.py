@@ -5,11 +5,17 @@ PROJ_DIR = '../../'
 
 import numpy as np
 import tensorflow as tf
+TF_DTYPE = tf.float16
+if TF_DTYPE is tf.float16:
+    print("Setting float16 precision")
+    policy = tf.keras.mixed_precision.Policy('mixed_float16')
+    tf.keras.mixed_precision.set_global_policy(policy)
+    tf.keras.backend.set_floatx('float16')
 import gc
 from recolor import *
 sys.path.append(PROJ_DIR)
 from models.build_models import *
-from attack.attack_utils import mia
+from attack.attack_utils import mia, evaluate_model
 from losses import *
 from tensorflow.keras import datasets, layers, models
 import timeit
@@ -34,7 +40,7 @@ class MetaAttack:
                  unroll_steps=2,
                  pert_eps=0.08,
                  color_gridshape=[16,32,32],
-                 colorpert_eps=0.06,
+                 colorpert_eps=0.04,
                  adv_learning_rate=0.01,
                  colorperturb_smooth_lambda=0.05,
                  verbose=True,
@@ -52,6 +58,8 @@ class MetaAttack:
                 tf.keras.models.clone_model(surrogate_models) 
                 for _ in range(surrogate_amount)
                 ]
+            del surrogate_models
+            gc.collect()
             for model in self.surrogate_models:
                 model.compile(**model_compile_args)
                 self.reinit_surrogate_model(model)
@@ -83,10 +91,10 @@ class MetaAttack:
         # Dataset used for the training
         def _dataset_to_tf(dataset, nameprefix=''):
             x = tf.constant(dataset[0],
-                            dtype=tf.float32,
+                            dtype=TF_DTYPE,
                             name=nameprefix+'_x')
             y = tf.constant(dataset[1],
-                            dtype=tf.float32,
+                            dtype=TF_DTYPE,
                             name=nameprefix+'_y')
             return (x,y)
         self.meta_training_dataset = _dataset_to_tf(meta_training_dataset,
@@ -117,12 +125,13 @@ class MetaAttack:
         # Surrogate models
         #self._coldstart_surrogate_models()
         # Attack parameters
-        colorperts = tf.Variable(tf.random.normal(shape=[self.poison_amount, *self.color_gridshape, 3]),
-                                 dtype=tf.float32,
+        colorperts = tf.Variable(tf.random.normal(shape=[self.poison_amount, *self.color_gridshape, 3],
+                                                  dtype=TF_DTYPE),
+                                 dtype=TF_DTYPE,
                                  name='colorperts')
         _colorgrid = None
-        perts = tf.Variable(tf.zeros_like(self.meta_attack_dataset[0]),
-                            dtype=tf.float32,
+        perts = tf.Variable(tf.zeros_like(self.meta_attack_dataset[0], dtype=TF_DTYPE),
+                            dtype=TF_DTYPE,
                             name='perts')
 
         attack_x = self.meta_attack_dataset[0]
@@ -167,6 +176,7 @@ class MetaAttack:
                 _colorout, _colorgrid = recolor(attack_x, colorperts, grid=_colorgrid)
                 poison_x = tf.clip_by_value(_colorout + perts, 0., 1.) 
 
+
                 for model_i in range(self.surrogate_amount):
                     with tape.stop_recording():
                         model = tf.keras.models.clone_model(self.surrogate_models[model_i])
@@ -174,17 +184,21 @@ class MetaAttack:
                         # Unroll the surrogate model
                         # Problem: The fit() function won't record the gradient
                         # w.r.t. colorperturbs and perturbs
+                        print("Unroll surrogate model {}".format(model_i))
                         model.fit(self.meta_testing_dataset[0], 
-                                  self.meta_testing_dataset[1],
-                                  epochs=self.unroll_steps,
-                                  **self.training_args)
+                                self.meta_testing_dataset[1],
+                                epochs=self.unroll_steps,
+                                **self.training_args)
                     loss_sum.append(train_loss(poison_y, model(poison_x)) - \
                                     train_loss(poison_y, self.surrogate_models[model_i](poison_x)))
+
                     
                 smooth_loss = self.colorperturb_smooth_lambda*smoothloss(colorperts)
                 loss_sum.append(smooth_loss)
                 loss_sum = tf.reduce_mean(loss_sum)
             colorpert_gradients, pert_gradients = tape.gradient(loss_sum, [colorperts, perts])
+            del model
+            gc.collect()
 
             #colorperts.assign(colorperts-self.color_step*tf.sign(colorpert_gradients))
             #perts.assign(perts-self.perturb_step*tf.sign(pert_gradients))
@@ -243,11 +257,35 @@ class MetaAttack:
         # https://stackoverflow.com/questions/63435679/reset-all-weights-of-keras-model
             for l in model.layers:
                 if hasattr(l,"kernel_initializer"):
-                    l.kernel.assign(l.kernel_initializer(tf.shape(l.kernel)))
+                    try:
+                        l.kernel.assign(tf.cast(l.kernel_initializer(tf.shape(l.kernel)),
+                                                dtype=l.kernel.dtype))
+                    except:
+                        print("kernel_initializer")
+                        print(l.kernel.dtype)
+                        print(tf.cast(l.kernel_initializer(tf.shape(l.kernel)),
+                                                dtype=l.kernel.dtype))
+                        exit(0)
                 if hasattr(l,"bias_initializer"):
-                    l.bias.assign(l.bias_initializer(tf.shape(l.bias)))
+                    try:
+                        l.bias.assign(tf.cast(l.bias_initializer(tf.shape(l.bias)),
+                                            dtype=l.bias.dtype))
+                    except:
+                        print("bias_initializer")
+                        print(l.bias.dtype)
+                        print(tf.cast(l.bias_initializer(tf.shape(l.bias)),
+                                            dtype=l.bias.dtype).dtype)
+                        exit(0)
                 if hasattr(l,"recurrent_initializer"):
-                    l.recurrent_kernel.assign(l.recurrent_initializer(tf.shape(l.recurrent_kernel)))
+                    try:
+                        l.recurrent_kernel.assign(tf.cast(l.recurrent_initializer(tf.shape(l.recurrent_kernel)),
+                                                        l.recurrent_kernel.dtype))
+                    except:
+                        print('recurrent_initializer')
+                        print(l.recurrent_kernel.dtype)
+                        print(f.cast(l.recurrent_initializer(tf.shape(l.recurrent_kernel)),
+                                                        l.recurrent_kernel.dtype).dtype)
+                        exit(0)
         _reinitialize(model)
 
 def test(): 
@@ -288,7 +326,9 @@ def test():
                                     preprocess_fn=preprocess_fn,
                                     img_size=[96,96,3])
     attack_dataset = exp_dataset.get_attack_dataset()
-    attack_dataset = (attack_dataset[0][0:400], attack_dataset[1][0:400])
+    meta_shadow_amount = 3600
+    meta_shadow_dataset = (attack_dataset[0][:meta_shadow_amount], attack_dataset[1][:meta_shadow_amount])
+    meta_attack_dataset = (attack_dataset[0][meta_shadow_amount:], attack_dataset[1][meta_shadow_amount:])
     np.save('attack_x.npy', attack_dataset[0])
     save_sample_img(attack_dataset[0][0], 'attack_sample.png')
 
@@ -307,7 +347,7 @@ def test():
                         meta_attack_dataset=attack_dataset,
                         target_class=0,
                         surrogate_model_pattern='duplicate',
-                        surrogate_amount=4,
+                        surrogate_amount=8,
                         model_compile_args=model_compile_args,
                         training_args={
                             'batch_size': 100,
@@ -367,19 +407,35 @@ def test():
 
     member_dataset = exp_dataset.get_member_dataset(data_range=data_range, target_class=0)
     nonmember_dataset = exp_dataset.get_nonmember_dataset(data_range=data_range, target_class=0)
+    training_dataset = exp_dataset.get_member_dataset()
+    testing_dataset = exp_dataset.get_nonmember_dataset()
 
     metric = 'Mentr'
 
     print('clean model')
     mia(clean_model, member_dataset, nonmember_dataset, metric=metric)
+    acc = evaluate_model(clean_model, training_dataset)
+    print("Training Acc: {}".format(acc))
+    acc = evaluate_model(clean_model, testing_dataset)
+    print("Testing Acc: {}".format(acc))
+
 
    
     print('dirty label model')
     mia(dirty_label_model, member_dataset, nonmember_dataset, metric=metric)
+    acc = evaluate_model(dirty_label_model, training_dataset)
+    print("Training Acc: {}".format(acc))
+    acc = evaluate_model(dirty_label_model, testing_dataset)
+    print("Testing Acc: {}".format(acc))
+
 
     if if_meta_attack:
         print('dirty model')
         mia(dirty_model, member_dataset, nonmember_dataset, metric=metric) 
+        acc = evaluate_model(dirty_model, training_dataset)
+        print("Training Acc: {}".format(acc))
+        acc = evaluate_model(dirty_model, testing_dataset)
+        print("Testing Acc: {}".format(acc))
 
 
 def save_sample_img(x, path):
@@ -387,4 +443,8 @@ def save_sample_img(x, path):
     x.save(path)
 
 if __name__ == '__main__':
-    test()
+    try:
+        test()
+    except Exception as e:
+        print(e)
+        exit(0)

@@ -21,6 +21,7 @@ def recolor(inputs, colorperts, name=None, grid=None):
     if grid is None:
         grid = tf.meshgrid(*[tf.linspace(start=start, stop=stop, num=ncolorres) for start, stop, ncolorres in zip(xrefmin, xrefmax, gridshape)], indexing='ij')
         grid = tf.stack(grid, axis=-1)
+        grid = tf.cast(grid, inputs.dtype)
 
     # take a single image and a color perturbation grid and perform the color transformation
     @tf.function
@@ -33,8 +34,7 @@ def recolor(inputs, colorperts, name=None, grid=None):
         return img
     
     # apply _recolor to all images in batch
-    outputs = tf.map_fn(_recolor, (inputs, colorperts), dtype=tf.float32, name=name)
-    stop = timeit.default_timer()
+    outputs = tf.map_fn(_recolor, (inputs, colorperts), dtype=inputs.dtype, name=name)
     outputs = tf.image.yuv_to_rgb(outputs)
     return outputs, grid
 
