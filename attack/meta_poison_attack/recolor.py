@@ -1,5 +1,6 @@
 import tensorflow as tf
 import tensorflow_probability as tfp
+import timeit
 
 # Based on https://github.com/wronnyhuang/metapoison/blob/master/recolor.py
 
@@ -19,9 +20,10 @@ def recolor(inputs, colorperts, name=None, grid=None):
     xrefmax = [1., .5, .5]
     if grid is None:
         grid = tf.meshgrid(*[tf.linspace(start=start, stop=stop, num=ncolorres) for start, stop, ncolorres in zip(xrefmin, xrefmax, gridshape)], indexing='ij')
-        grid = tf.stack(eye, axis=-1)
+        grid = tf.stack(grid, axis=-1)
 
     # take a single image and a color perturbation grid and perform the color transformation
+    @tf.function
     def _recolor(arg):
         # We suppose the pixel values are rescaled to [0, 1]
         img, colorpert = arg  # img and colorpert shape [ncolorres, ncolorres, ncolorres, 3]
@@ -32,8 +34,17 @@ def recolor(inputs, colorperts, name=None, grid=None):
     
     # apply _recolor to all images in batch
     outputs = tf.map_fn(_recolor, (inputs, colorperts), dtype=tf.float32, name=name)
+    stop = timeit.default_timer()
     outputs = tf.image.yuv_to_rgb(outputs)
     return outputs, grid
+
+def timer(func):
+    def inner(*args, **kwargs):
+        start = timeit.default_timer()
+        func(*args, **kwargs)
+        stop = timeit.default_timer()
+        print("Time: ", stop-start)
+    return inner
 
 def smoothloss(colorperts):
     gridshape = colorperts.shape.as_list()[1:]
