@@ -29,8 +29,9 @@ class AdvLoss(tf.keras.losses.Loss):
         """
         cce = tf.keras.losses.CategoricalCrossentropy(tf.keras.losses.Reduction.SUM)
         indices_target = (tf.math.argmax(y_true, axis=1, output_type=tf.int32) == self.target_class)
-        loss = cce(y_true[~indices_target], y_pred[~indices_target]) - \
-               cce(y_true[indices_target], y_pred[indices_target])
+        #loss = cce(y_true[~indices_target], y_pred[~indices_target]) - \
+               #cce(y_true[indices_target], y_pred[indices_target])
+        loss = cce(y_true[indices_target], y_pred[indices_target])
         return loss
 
     def get_config(self):
