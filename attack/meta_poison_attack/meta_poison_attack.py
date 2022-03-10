@@ -1,5 +1,6 @@
 import os
 os.environ["CUDA_VISIBLE_DEVICES"] = '3'
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3' 
 import sys
 PROJ_DIR = '../../'
 
@@ -25,8 +26,7 @@ from PIL import Image
 class MetaAttack:
     def __init__(self,
                  surrogate_models,
-                 meta_training_dataset,
-                 meta_testing_dataset,
+                 meta_shadow_dataset,
                  meta_attack_dataset,
                  target_class,
                  surrogate_model_pattern='duplicate',
@@ -58,6 +58,7 @@ class MetaAttack:
                 tf.keras.models.clone_model(surrogate_models) 
                 for _ in range(surrogate_amount)
                 ]
+            self.model_skeleton = tf.keras.models.clone_model(surrogate_models)
             del surrogate_models
             gc.collect()
             for model in self.surrogate_models:
@@ -97,10 +98,9 @@ class MetaAttack:
                             dtype=TF_DTYPE,
                             name=nameprefix+'_y')
             return (x,y)
-        self.meta_training_dataset = _dataset_to_tf(meta_training_dataset,
-                                                    'meta_training')
-        self.meta_testing_dataset = _dataset_to_tf(meta_testing_dataset,
-                                                   'meta_testing')
+
+        self.meta_shadow_dataset = _dataset_to_tf(meta_shadow_dataset,
+                                                  'meta_training')
         self.meta_attack_dataset = _dataset_to_tf(meta_attack_dataset,
                                                   'meta_attack')
 
@@ -149,24 +149,58 @@ class MetaAttack:
         if self.verbose:
             log_format = """
             ------------------------------
-            Attack Step: {:3d}/{:3d}
+            Attack step: {:3d}/{:3d}
             Overall loss: {:.4f}
             Smooth loss: {:.4f}
             Colorperts: [{:.4f}, {:.4f}]
             Perts: [{:.4f}, {:.4f}]
+            Time collapsed: {:.4f}s
             ------------------------------
             """
+            
+        # ------------------------------------------------
+        # |Random sampling meta training and testing data|
+        # ------------------------------------------------
+        shadow_amount = len(self.meta_shadow_dataset[0])
+        split_ratio = 0.7
+        meta_training_amount = int(shadow_amount * split_ratio)
+        np.random.seed(54321)
+        tf.random.set_seed(54321)
+        indices = tf.constant(np.arange(0, shadow_amount, dtype=int), dtype=tf.int32)
+        meta_training_indices = []
+        meta_testing_indices = []
+        for _ in range(self.surrogate_amount):
+            new_indices = tf.random.shuffle(indices)
+            meta_training_indices.append(new_indices[:meta_training_amount])
+            meta_testing_indices.append(new_indices[meta_training_amount:])
+        
+        def _get_splitted_dataset(model_i):
+            training_x = tf.gather(self.meta_shadow_dataset[0],
+                                   indices=meta_training_indices[model_i],
+                                   axis=0)
+            training_y = tf.gather(self.meta_shadow_dataset[1],
+                                   indices=meta_training_indices[model_i],
+                                   axis=0)
+            testing_x = tf.gather(self.meta_shadow_dataset[0],
+                                   indices=meta_testing_indices[model_i],
+                                   axis=0)
+            testing_y = tf.gather(self.meta_shadow_dataset[1],
+                                   indices=meta_testing_indices[model_i],
+                                   axis=0)
+            training_dataset = (training_x, training_y)
+            testing_dataset = (testing_x, testing_y)
+            return (training_dataset, testing_dataset)
 
         # ----------------------------------------------
         # |    Generating poisons by meta learning     |
         # ----------------------------------------------
- 
+
         self.meta_model_compile_args = self.model_compile_args.copy()
         self.meta_model_compile_args['loss'] = AdvLoss(target_class=self.target_class)
+        self.model_skeleton.compile(**self.meta_model_compile_args)
         for attack_i in range(self.attack_steps):
-            poisoned_y = tf.concat([self.meta_training_dataset[1], poison_y],0)
+            start = timeit.default_timer() 
             poison_x = tf.clip_by_value(_colorout + perts, 0., 1.)
-            poisoned_x = tf.concat([self.meta_training_dataset[0], poison_x],0)
             pert_gradients = []
             colorpert_gradients = []
             with tf.GradientTape(watch_accessed_variables=False) as tape:
@@ -175,21 +209,23 @@ class MetaAttack:
                 tape.watch(colorperts)
                 _colorout, _colorgrid = recolor(attack_x, colorperts, grid=_colorgrid)
                 poison_x = tf.clip_by_value(_colorout + perts, 0., 1.) 
-
-
                 for model_i in range(self.surrogate_amount):
+                    meta_training_dataset, meta_testing_dataset = _get_splitted_dataset(model_i)
+                    poisoned_y = tf.concat([meta_training_dataset[1], poison_y],0)
+                    poisoned_x = tf.concat([meta_training_dataset[0], poison_x],0)
                     with tape.stop_recording():
-                        model = tf.keras.models.clone_model(self.surrogate_models[model_i])
-                        model.compile(**self.meta_model_compile_args)
+                        #model = tf.keras.models.clone_model(self.surrogate_models[model_i])
+                        #model.compile(**self.meta_model_compile_args)
                         # Unroll the surrogate model
                         # Problem: The fit() function won't record the gradient
                         # w.r.t. colorperturbs and perturbs
+                        self.model_skeleton.set_weights(self.surrogate_models[model_i].get_weights())
                         print("Unroll surrogate model {}".format(model_i))
-                        model.fit(self.meta_testing_dataset[0], 
-                                self.meta_testing_dataset[1],
-                                epochs=self.unroll_steps,
-                                **self.training_args)
-                    loss_sum.append(train_loss(poison_y, model(poison_x)) - \
+                        self.model_skeleton.fit(meta_testing_dataset[0], 
+                                                meta_testing_dataset[1],
+                                                epochs=self.unroll_steps,
+                                                **self.training_args)
+                    loss_sum.append(train_loss(poison_y, self.model_skeleton(poison_x)) - \
                                     train_loss(poison_y, self.surrogate_models[model_i](poison_x)))
 
                     
@@ -209,13 +245,10 @@ class MetaAttack:
             # |               Apply perturbs               |
             # ----------------------------------------------
 
-            start = timeit.default_timer()
             colorperts.assign(tf.clip_by_value(colorperts, -self.colorpert_eps, self.colorpert_eps))
             perts.assign(tf.clip_by_value(perts, -self.pert_eps, self.pert_eps))
             _colorout, _colorgrid = recolor(attack_x, colorperts, grid=_colorgrid)
             poison_x = tf.clip_by_value(_colorout + perts, 0., 1.)
-            stop = timeit.default_timer()
-            print('Time: ', stop-start)
 
             # ----------------------------------------------
             # |         Update surrogate models            |
@@ -231,6 +264,7 @@ class MetaAttack:
                                                        epochs=1,
                                                        **self.training_args)
                     self.current_epoch[model_i] += 1
+            stop = timeit.default_timer()
             # ----------------------------------------------
             # |                Print logs                  |
             # ----------------------------------------------
@@ -243,7 +277,8 @@ class MetaAttack:
                     tf.reduce_min(colorperts).numpy(),
                     tf.reduce_max(colorperts).numpy(),
                     tf.reduce_min(perts).numpy(),
-                    tf.reduce_max(perts).numpy()
+                    tf.reduce_max(perts).numpy(),
+                    stop-start,
                 )
                 print(log_str)
 
@@ -329,8 +364,8 @@ def test():
     meta_shadow_amount = 3600
     meta_shadow_dataset = (attack_dataset[0][:meta_shadow_amount], attack_dataset[1][:meta_shadow_amount])
     meta_attack_dataset = (attack_dataset[0][meta_shadow_amount:], attack_dataset[1][meta_shadow_amount:])
-    np.save('attack_x.npy', attack_dataset[0])
-    save_sample_img(attack_dataset[0][0], 'attack_sample.png')
+    np.save('attack_x.npy', meta_attack_dataset[0])
+    save_sample_img(meta_attack_dataset[0][0], 'attack_sample.png')
 
     data_range = [0, 4000]
     if_meta_attack = True 
@@ -342,12 +377,11 @@ def test():
         else:
             meta = MetaAttack(
                         surrogate_models=build_classifier(),
-                        meta_training_dataset=exp_dataset.get_member_dataset(data_range=data_range),
-                        meta_testing_dataset=exp_dataset.get_nonmember_dataset(data_range=data_range),
-                        meta_attack_dataset=attack_dataset,
+                        meta_shadow_dataset=meta_shadow_dataset,
+                        meta_attack_dataset=meta_attack_dataset,
                         target_class=0,
                         surrogate_model_pattern='duplicate',
-                        surrogate_amount=8,
+                        surrogate_amount=12,
                         model_compile_args=model_compile_args,
                         training_args={
                             'batch_size': 100,
