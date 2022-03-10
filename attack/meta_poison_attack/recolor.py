@@ -38,7 +38,7 @@ def recolor(inputs, colorperts, name=None, grid=None):
 
     @tf.function
     def read_meshgrid(colorgrid, inter_idx):
-        return tf.gather_nd(colorgrid, inter_idx, batch_dims=1)
+        return tf.gather_nd(params=colorgrid, indices=inter_idx, batch_dims=1)
 
     @tf.function
     def trilinear_interpolation(imgs, colorgrid, xrefmin, xrefmax):
@@ -54,7 +54,7 @@ def recolor(inputs, colorperts, name=None, grid=None):
             inter_idx[..., i].assign(tf.cast((imgs[..., i] - xrefmin[i]) * gridshape[i], dtype=dtype))
 
         inter_idx_float = inter_idx % 1
-        inter_idx = tf.cast(tf.math.floor(inter_idx_float), tf.int32)
+        inter_idx = tf.cast(tf.math.floor(inter_idx), tf.int32)
 
         grid_values = []
         coeffs = []
@@ -75,7 +75,7 @@ def recolor(inputs, colorperts, name=None, grid=None):
                     coeffs.append(tf.cast(coeff, dtype=dtype))
                     del coeff
 
-        outputs = tf.reduce_mean([value * coeff for value, coeff in zip (grid_values, coeffs)], axis=0)
+        outputs = tf.reduce_sum([value * coeff for value, coeff in zip (grid_values, coeffs)], axis=0)
         return outputs
 
     #@tf.function
@@ -84,8 +84,8 @@ def recolor(inputs, colorperts, name=None, grid=None):
 
     yref = grid + colorperts
 
-    inputs = tf.image.rgb_to_yuv(inputs)
-    outputs = trilinear_interpolation(inputs, yref, xrefmin, xrefmax)
+    outputs = trilinear_interpolation(tf.image.rgb_to_yuv(inputs), yref, xrefmin, xrefmax)
+
     outputs = tf.clip_by_value(outputs, xrefmin, xrefmax)
 
     #outputs = _recolor((inputs, yref))
