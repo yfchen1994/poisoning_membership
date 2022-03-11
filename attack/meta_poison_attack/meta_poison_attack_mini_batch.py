@@ -57,8 +57,8 @@ class MetaAttack:
         # |       Meta Learning configurations         |
         # ----------------------------------------------
         self.model_compile_args = model_compile_args
-        self.surrogate_amount = surrogate_amount
         if surrogate_model_pattern == 'duplicate':
+            self.surrogate_amount = surrogate_amount
             self.surrogate_models = [
                 tf.keras.models.clone_model(surrogate_models) 
                 for _ in range(surrogate_amount)
@@ -72,8 +72,9 @@ class MetaAttack:
             self.current_iter = np.zeros(self.surrogate_amount)
         else:
             self.surrogate_models = surrogate_models 
+            self.surrogate_amount = len(self.surrogate_models)
+
                     
-        self.surrogate_amount = len(self.surrogate_models)
         self.attack_steps = attack_steps
         self.meta_epochs = meta_epochs 
         self.unroll_steps = unroll_steps 
@@ -196,13 +197,14 @@ class MetaAttack:
         # |Random sampling meta training and testing data|
         # ------------------------------------------------
         meta_shadow_amount = len(self.meta_shadow_dataset[0])
-        split_ratio = 0.9
+        split_ratio = 0.5
         meta_training_amount = int(meta_shadow_amount * split_ratio)
 
         indices = tf.constant(np.arange(0, meta_shadow_amount, dtype=int), dtype=tf.int32)
         meta_training_indices = []
         meta_testing_indices = []
 
+        
         for _ in range(self.surrogate_amount):
             new_indices = tf.random.shuffle(indices)
             meta_training_indices.append(new_indices[:meta_training_amount])
@@ -226,7 +228,7 @@ class MetaAttack:
             testing_dataset = (testing_x, testing_y)
             return (training_dataset, testing_dataset)
 
-        @tf.function
+        #@tf.function
         def _create_dataset_iterator(dataset):
             dataset = tf.data.Dataset.from_tensor_slices(dataset)
             dataset_tmp = dataset.shuffle(buffer_size=1024).repeat()\
@@ -398,10 +400,11 @@ class MetaAttack:
                             # ----------------------------------------------
                             # |         Update surrogate models            |
                             # ----------------------------------------------
+                            poisoned_y = tf.concat([meta_training_dataset[1], poison_y], 0)
+                            poisoned_x = tf.concat([meta_training_dataset[0], poison_x], 0)
+
                             with tape.stop_recording():
                                 meta_training_dataset = _get_dataset_batch(meta_training_dsi[model_i])
-                                poisoned_y = tf.concat([meta_training_dataset[1], poison_y], 0)
-                                poisoned_x = tf.concat([meta_training_dataset[0], poison_x], 0)
                                 train_minibatch(self.surrogate_models[model_i],
                                                 (poisoned_x, poisoned_y),
                                                 optimizer=optimizer_learning[model_i],
@@ -418,8 +421,8 @@ class MetaAttack:
                                                 optimizer=optimizer_learning_unroll[model_i],
                                                 loss_fn=adv_loss)
                             
-                            loss = train_loss(poison_y, self.model_skeleton(poison_x)) - \
-                                    train_loss(poison_y, self.surrogate_models[model_i](poison_x))
+                            loss = train_loss(poisoned_y, self.model_skeleton(poisoned_x)) - \
+                                    train_loss(poisoned_y, self.surrogate_models[model_i](poisoned_x))
                             loss_cached.append(loss)
 
                         smooth_loss = self.colorperturb_smooth_lambda*smoothloss(colorperts_minibatch)
@@ -517,10 +520,14 @@ class MetaAttack:
         _reinitialize(model)
 
 def test(): 
+    DATASET_NAME = 'stl10'
+    IMG_SIZE = [96, 96, 3]
+    data_range = [0, 4000]
+    meta_shadow_amount = 3600
 
     def build_classifier():
         model = models.Sequential()
-        model.add(layers.Conv2D(32, (3, 3), activation='relu', input_shape=(96, 96, 3)))
+        model.add(layers.Conv2D(32, (3, 3), activation='relu', input_shape=tuple(IMG_SIZE)))
         model.add(layers.MaxPooling2D((2, 2)))
         model.add(layers.Conv2D(64, (3, 3), activation='relu'))
         model.add(layers.MaxPooling2D((2, 2)))
@@ -550,17 +557,40 @@ def test():
     def preprocess_fn(x):
         return x / 255.
 
-    exp_dataset = ExperimentDataset(dataset_name='stl10',
+    def build_xception_classifier():
+        base_model = tf.keras.applications.Xception(
+            weights='imagenet',
+            input_shape=tuple(IMG_SIZE),
+            include_top=False,
+        )
+        base_model.trainable = False
+        inputs = tf.keras.Input(shape=tuple(IMG_SIZE))
+        x = base_model(inputs)
+        x = layers.Flatten()(x)
+        x = layers.Dense(64, activation='tanh')(x)
+        x = layers.Dense(10, activation='softmax')(x)
+        model = tf.keras.Model(inputs, x)
+        return model
+
+    exp_dataset = ExperimentDataset(dataset_name=DATASET_NAME,
                                     preprocess_fn=preprocess_fn,
-                                    img_size=[96,96,3])
+                                    img_size=IMG_SIZE)
     attack_dataset = exp_dataset.get_attack_dataset()
-    meta_shadow_amount = 3600
     meta_shadow_dataset = (attack_dataset[0][:meta_shadow_amount], attack_dataset[1][:meta_shadow_amount])
+    data_augmentation = tf.keras.Sequential(
+            [tf.keras.layers.experimental.preprocessing.RandomFlip(),
+             tf.keras.layers.experimental.preprocessing.RandomRotation(0.2)]
+        )
+    meta_shadow_dataset = (np.r_[meta_shadow_dataset[0],
+                                 data_augmentation.predict(meta_shadow_dataset[0])],
+                           np.r_[meta_shadow_dataset[1],
+                                 meta_shadow_dataset[1]])
+    print(meta_shadow_dataset[0].shape)
+    print(meta_shadow_dataset[1].shape)
     meta_attack_dataset = (attack_dataset[0][meta_shadow_amount:], attack_dataset[1][meta_shadow_amount:])
     np.save('attack_x.npy', meta_attack_dataset[0])
     save_sample_img(meta_attack_dataset[0][0], 'attack_sample.png')
 
-    data_range = [0, 4000]
     if_meta_attack = True 
     dirty_model_path = 'dirtymodel.h5'
     if if_meta_attack:
@@ -573,7 +603,7 @@ def test():
             else:
                 colorperts = None
                 perts = None
-                for i in range(5):
+                for i in range(1):
                     meta = MetaAttack(
                                 surrogate_models=build_classifier(),
                                 meta_shadow_dataset=meta_shadow_dataset,
@@ -583,13 +613,13 @@ def test():
                                 surrogate_amount=12,
                                 model_compile_args=model_compile_args,
                                 training_args={
-                                    'batch_size': 200,
+                                    'batch_size': 100,
                                 },
                                 attack_steps=1,
                                 attack_current_step=i,
                                 meta_epochs=20,
                                 unroll_steps=1,
-                                pert_eps=0.08,
+                                pert_eps=16./255,
                                 color_gridshape=[16,32,32],
                                 colorpert_eps=0.02,
                                 adv_learning_rate=0.001,

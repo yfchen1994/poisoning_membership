@@ -11,6 +11,13 @@ def train_loss(y_true, y_pred):
     loss = cce(y_true, y_pred)
     return loss
 
+@tf.function
+def _Mentr(preds, y):
+    fy  = tf.reduce_sum(preds*y, axis=1)
+    fi = preds*(1-y)
+    score = -(1-fy)*tf.math.log(fy+1e-10)-tf.reduce_sum(fi*tf.math.log(1-fi+1e-10), axis=1)
+    return score
+
 class AdvLoss(tf.keras.losses.Loss):
     def __init__(self, target_class, **kwargs):
         self.target_class = target_class
@@ -27,11 +34,14 @@ class AdvLoss(tf.keras.losses.Loss):
             y_pred: model predictions.
             target_class (int): the target class to poison. 
         """
-        cce = tf.keras.losses.CategoricalCrossentropy(tf.keras.losses.Reduction.SUM)
+        #cce = tf.keras.losses.CategoricalCrossentropy(tf.keras.losses.Reduction.SUM)
+        #cce = tf.keras.losses.CategoricalCrossentropy()
         indices_target = (tf.math.argmax(y_true, axis=1, output_type=tf.int32) == self.target_class)
         #loss = cce(y_true[~indices_target], y_pred[~indices_target]) - \
-               #cce(y_true[indices_target], y_pred[indices_target])
-        loss = cce(y_true[indices_target], y_pred[indices_target])
+        #       cce(y_true[indices_target], y_pred[indices_target])
+        #loss = -cce(y_true[indices_target], y_pred[indices_target])
+        loss = tf.reduce_mean(_Mentr(y_pred[~indices_target], y_true[~indices_target])) - \
+               tf.reduce_mean(_Mentr(y_pred[indices_target], y_true[indices_target]))
         return loss
 
     def get_config(self):
@@ -52,4 +62,3 @@ def test_adv_loss():
 
 if __name__ == '__main__':
     test_adv_loss()
-

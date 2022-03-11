@@ -16,6 +16,7 @@ class TransferLearningModel:
                  pretrained_model_name,
                  input_shape,
                  fcn_sizes,
+                 if_compile=True,
                  optimizer=tf.keras.optimizers.Adam(),
                  loss_fn=tf.keras.losses.CategoricalCrossentropy()):
         self.input_shape = input_shape
@@ -25,6 +26,7 @@ class TransferLearningModel:
         self.optimizer=optimizer
         self.loss_fn = loss_fn
         self._build_transfer_learning_model()
+        self._if_compile=True
     
     def _build_transfer_learning_model(self):
         tf.random.set_seed(54321)
@@ -40,11 +42,15 @@ class TransferLearningModel:
         outputs = tf.keras.layers.Dense(self.fcn_sizes[-1], activation='softmax')(x)
         self.model = tf.keras.Model(inputs, outputs)
         self.model.summary()
-        self.model.compile(
-            optimizer=self.optimizer,
-            loss=self.loss_fn,
-            metrics=['accuracy']
-        )
+        if self._if_compile:
+            self.model.compile(
+                optimizer=self.optimizer,
+                loss=self.loss_fn,
+                metrics=['accuracy']
+            )
+
+    def get_transfer_learning_model(self):
+        return self.model
 
     def transfer_learning(self,
                           train_ds,
@@ -137,7 +143,7 @@ class FeatureExtractor:
 
         self.model.trainable = False
 
-DATASET_ROOT = '/home/pretrain_inference/datasets/'
+DATASET_ROOT = '/data/cyf/projects/datasets/'
 
 class ExperimentDataset:
     def __init__(self,

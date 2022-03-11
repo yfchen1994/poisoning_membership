@@ -9,7 +9,7 @@ import tensorflow as tf
 import PIL
 
 
-DATASET_ROOT = '/home/pretrain_inference/datasets/'
+DATASET_ROOT = '../datasets/'
 
 def check_directory(path):
     """

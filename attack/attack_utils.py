@@ -126,7 +126,7 @@ def sort_best_match_embeeding_heuristis(anchorpoint_embeedings, seed_embeedings)
 def _Mentr(preds, y):
     fy  = np.sum(preds*y, axis=1)
     fi = preds*(1-y)
-    score = -(1-fy)*np.log(fy)-np.sum(fi*np.log(1-fi+1e-30), axis=1)
+    score = -(1-fy)*np.log(fy+1e-30)-np.sum(fi*np.log(1-fi+1e-30), axis=1)
     return score
 
 def _Max(preds):
@@ -136,13 +136,13 @@ def mia(model, member_dataset, nonmember_dataset, metric='Mentr'):
     member_preds = model.predict(member_dataset[0])
     nonmember_preds = model.predict(nonmember_dataset[0])
     if metric == 'Mentr':
-        member_score = _Mentr(member_preds, member_dataset[1])
-        nonmember_score = _Mentr(nonmember_preds, nonmember_dataset[1])
+        member_score = -_Mentr(member_preds, member_dataset[1])
+        nonmember_score = -_Mentr(nonmember_preds, nonmember_dataset[1])
     elif metric == 'max':
         member_score = _Max(member_preds)
         nonmember_score = _Max(nonmember_preds)
-    member_label = -np.ones(len(member_preds))
-    nonmember_label = np.ones(len(nonmember_preds))
+    member_label = np.ones(len(member_preds))
+    nonmember_label = np.zeros(len(nonmember_preds))
     mia_auc = roc_auc_score(np.r_[member_label, nonmember_label],
                             np.r_[member_score, nonmember_score])
 
