@@ -30,7 +30,14 @@ def save_model(model, model_path):
     model.save(model_path)
 
 def load_model(model_path):
-    return tf.keras.models.load_model(model_path)
+    try:
+        return tf.keras.models.load_model(model_path,
+                                          custom_objects={
+                                              "TrainingAccuracyPerClass":TrainingAccuracyPerClass,
+                                              "TrainingLossPerClass":TrainingLossPerClass,
+                                          })
+    except:
+        return tf.keras.models.load_model(model_path)
 
 class TrainingAccuracyPerClass(tf.keras.metrics.Metric):
     def __init__(self, name='training_accuracy_per_class', **kwargs):
@@ -59,7 +66,7 @@ class TrainingAccuracyPerClass(tf.keras.metrics.Metric):
         self.correct_class_num.assign_add(correct_class_num)
         self.per_class_num.assign_add(per_class_num)
 
-    def reset_states(self):
+    def reset_state(self):
         self.accuracies.assign(tf.zeros(self.class_num))
         self.per_class_num.assign(tf.zeros(self.class_num))
         self.correct_class_num.assign(tf.zeros(self.class_num))
@@ -98,7 +105,7 @@ class TrainingLossPerClass(tf.keras.metrics.Metric):
         self.per_class_num.assign_add(per_class_num)
         self.loss_perclass.assign_add(per_class_loss)
 
-    def reset_states(self):
+    def reset_state(self):
         self.loss_perclass.assign(tf.zeros(self.class_num))
         self.per_class_num.assign(tf.zeros(self.class_num))
     
