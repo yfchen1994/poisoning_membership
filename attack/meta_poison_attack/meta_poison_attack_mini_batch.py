@@ -18,7 +18,7 @@ import gc
 from recolor import *
 sys.path.append(PROJ_DIR)
 from models.build_models import *
-from attack.attack_utils import mia, evaluate_model
+from attack.attack_utils import mia, evaluate_model, save_img_from_array
 from losses import *
 from tensorflow.keras import datasets, layers, models
 import timeit
@@ -44,35 +44,42 @@ class MetaAttack:
                  pert_eps=0.08,
                  color_gridshape=[16,32,32],
                  colorpert_eps=0.04,
-                 adv_learning_rate=0.01,
+                 adv_learning_rate=0.001,
                  colorperturb_smooth_lambda=0.05,
                  verbose=True,
                  colorperts=None,
                  perts=None,
+                 fine_tune=False,
                  ):
         
         self.verbose = verbose      
+        self.fine_tune = fine_tune
 
         # ----------------------------------------------
         # |       Meta Learning configurations         |
         # ----------------------------------------------
         self.model_compile_args = model_compile_args
+        self.surrogate_amount = surrogate_amount
         if surrogate_model_pattern == 'duplicate':
-            self.surrogate_amount = surrogate_amount
             self.surrogate_models = [
-                tf.keras.models.clone_model(surrogate_models) 
+                tf.keras.models.clone_model(surrogate_models)  # Clone_model will reinitilize the weights
                 for _ in range(surrogate_amount)
                 ]
-            self.model_skeleton = surrogate_models
-            del surrogate_models
-            gc.collect()
+            self.model_skeleton = tf.keras.models.clone_model(surrogate_models)
             for model in self.surrogate_models:
                 model.compile(**model_compile_args)
-                self.reinit_surrogate_model(model)
-            self.current_iter = np.zeros(self.surrogate_amount)
+                model.set_weights(surrogate_models.get_weights())
+            del surrogate_models
+            gc.collect()
+            self.current_epoch = np.zeros(self.surrogate_amount)
         else:
             self.surrogate_models = surrogate_models 
-            self.surrogate_amount = len(self.surrogate_models)
+                    
+        for model in self.surrogate_models:
+            self.reinit_surrogate_model(model)
+
+        if 'xception' in self.model_skeleton.layers[1].name:
+            self.model_skeleton.layers[1].trainable = self.fine_tune
 
                     
         self.attack_steps = attack_steps
@@ -117,6 +124,10 @@ class MetaAttack:
 
         self.poison_amount = len(self.meta_attack_dataset[0])
 
+        for model_i in range(self.surrogate_amount):
+            print("Model :{}, {:.4}".format(model_i, 
+                                            evaluate_model(self.surrogate_models[model_i], self.meta_shadow_dataset)))
+
     def _coldstart_surrogate_models(self):
         # Recurrent the current epoch for each surrogate model.
         print("Cold starting surrogate models.")
@@ -150,8 +161,8 @@ class MetaAttack:
 
 
         if self.colorperts is None:
-            colorperts = tf.Variable(tf.random.normal(shape=[self.poison_amount, *self.color_gridshape, 3],
-                                                    dtype=TF_DTYPE),
+            colorperts = tf.Variable(tf.zeros(shape=[self.poison_amount, *self.color_gridshape, 3],
+                                                     dtype=TF_DTYPE),
                                     dtype=TF_DTYPE,
                                     name='colorperts')
         else:
@@ -172,11 +183,11 @@ class MetaAttack:
         attack_x = tf.Variable(self.meta_attack_dataset[0], dtype=TF_DTYPE, trainable=False)
         attack_y = self.meta_attack_dataset[1]
 
-        colorperts.assign(tf.clip_by_value(colorperts, -self.colorpert_eps, self.colorpert_eps))
-        perts.assign(tf.clip_by_value(perts, -self.pert_eps, self.pert_eps))
+        #colorperts.assign(tf.clip_by_value(colorperts, -self.colorpert_eps, self.colorpert_eps))
+        #perts.assign(tf.clip_by_value(perts, -self.pert_eps, self.pert_eps))
 
         optimizer_colorpert = tf.keras.optimizers.Adam(learning_rate=self.adv_learning_rate)
-        optimizer_pert = tf.keras.optimizers.Adam(learning_rate=2*self.adv_learning_rate)
+        optimizer_pert = tf.keras.optimizers.Adam(learning_rate=5*self.adv_learning_rate)
 
         # For logging
         if self.verbose:
@@ -185,10 +196,10 @@ class MetaAttack:
             Attack Cycle: {:2d}
             Epoch: {:2d}/{:2d}
             Batch: {:5d}
-            Overall loss: {:.4f}
-            Smooth loss: {:.4f}
-            Colorperts: [{:.4f}, {:.4f}]
-            Perts: [{:.4f}, {:.4f}]
+            Overall loss: {:.8f}
+            Smooth loss: {:.8f}
+            Colorperts: [{:.6f}, {:.6f}]
+            Perts: [{:.6f}, {:.6f}]
             Time collapsed: {:.4f}s
             ------------------------------
             """
@@ -203,7 +214,6 @@ class MetaAttack:
         indices = tf.constant(np.arange(0, meta_shadow_amount, dtype=int), dtype=tf.int32)
         meta_training_indices = []
         meta_testing_indices = []
-
         
         for _ in range(self.surrogate_amount):
             new_indices = tf.random.shuffle(indices)
@@ -388,12 +398,15 @@ class MetaAttack:
                     with tf.GradientTape(watch_accessed_variables=False) as tape:
                         tape.watch(perts_minibatch)
                         tape.watch(colorperts_minibatch)
-                        _a = timeit.default_timer()
+
+                        _colorperts = self.colorpert_eps*tf.tanh(colorperts_minibatch)
+                        _perts = 2*self.pert_eps*tf.tanh(perts_minibatch)
+                        
                         _colorout, _colorgrid = recolor(attack_x_minibatch, 
-                                                        colorperts_minibatch, 
+                                                        _colorperts, 
                                                         grid=_colorgrid)    
 
-                        poison_x = tf.clip_by_value(_colorout + perts_minibatch, 0., 1.) 
+                        poison_x = tf.clip_by_value(_colorout + _perts, -1., 1.) 
                         loss_cached = []
                    
                         for model_i in range(self.surrogate_amount):
@@ -425,14 +438,16 @@ class MetaAttack:
                                     train_loss(poisoned_y, self.surrogate_models[model_i](poisoned_x))
                             loss_cached.append(loss)
 
-                        smooth_loss = self.colorperturb_smooth_lambda*smoothloss(colorperts_minibatch)
+                        smooth_loss = self.colorperturb_smooth_lambda*smoothloss(_colorperts)
                         loss_cached.append(smooth_loss)
-                        loss = tf.reduce_mean(loss_cached)
+                        loss = tf.reduce_sum(loss_cached)
                     color_grads, pert_grads = tape.gradient(loss,
                                                             [colorperts_minibatch, perts_minibatch])
 
                     optimizer_colorpert.apply_gradients([(color_grads, colorperts_minibatch)])
                     optimizer_pert.apply_gradients([(pert_grads, perts_minibatch)])
+                    #colorperts_minibatch.assign(colorperts_minibatch-self.adv_learning_rate*tf.sign(color_grads))
+                    #perts_minibatch.assign(perts_minibatch-self.adv_learning_rate*tf.sign(pert_grads))
 
                     # ----------------------------------------------
                     # |               Apply perturbs               |
@@ -441,6 +456,7 @@ class MetaAttack:
                     # ----------------------------------------------
                     # |            Update poisons                  |
                     # ----------------------------------------------
+                    """
                     _update_variable(colorperts, 
                                      attack_idx, 
                                      tf.clip_by_value(colorperts_minibatch, 
@@ -449,6 +465,10 @@ class MetaAttack:
                                      attack_idx, 
                                      tf.clip_by_value(perts_minibatch, 
                                                       -self.pert_eps, self.pert_eps))
+                    """
+                    _update_variable(colorperts, attack_idx, colorperts_minibatch)
+                    _update_variable(perts, attack_idx, perts_minibatch)
+
                     stop = timeit.default_timer()
                     # ----------------------------------------------
                     # |                Print logs                  |
@@ -461,10 +481,10 @@ class MetaAttack:
                             iters,
                             loss.numpy(),
                             smooth_loss.numpy(),
-                            tf.reduce_min(colorperts).numpy(),
-                            tf.reduce_max(colorperts).numpy(),
-                            tf.reduce_min(perts).numpy(),
-                            tf.reduce_max(perts).numpy(),
+                            tf.reduce_min(_colorperts).numpy(),
+                            tf.reduce_max(_colorperts).numpy(),
+                            tf.reduce_min(_perts).numpy(),
+                            tf.reduce_max(_perts).numpy(),
                             stop-start,
                         )
                         print(log_str)
@@ -477,8 +497,8 @@ class MetaAttack:
             for model_i in range(self.surrogate_amount):
                 self.reinit_surrogate_model(self.surrogate_models[model_i])
 
-        _colorout, _colorgrid = recolor(attack_x, colorperts)
-        attack_x.assign(tf.clip_by_value(_colorout+perts, 0., 1.))
+        _colorout, _colorgrid = recolor(attack_x, self.colorpert_eps*tf.tanh(colorperts))
+        attack_x.assign(tf.clip_by_value(_colorout+2*self.pert_eps*tf.tanh(perts), -1., 1.))
 
         return (attack_x.numpy(), attack_y.numpy()), colorperts.numpy(), perts.numpy()
 
@@ -487,6 +507,11 @@ class MetaAttack:
         def _reinitialize(model):
         # https://stackoverflow.com/questions/63435679/reset-all-weights-of-keras-model
             for l in model.layers:
+                if 'xception' in l.name:
+                    l.trainable = self.fine_tune
+            for l in model.layers:
+                if not l.trainable:
+                    continue
                 if hasattr(l,"kernel_initializer"):
                     try:
                         l.kernel.assign(tf.cast(l.kernel_initializer(tf.shape(l.kernel)),
@@ -540,10 +565,17 @@ def test():
     def build_xception_classifier():
         base_model = tf.keras.applications.Xception(
             weights='imagenet',
-            input_shape=(224,224,3),
+            input_shape=tuple(IMG_SIZE),
             include_top=False,
         )
-        inputs = tf.keras.Input(shape=(224,224,3))
+        base_model.trainable = False
+        inputs = tf.keras.Input(shape=tuple(IMG_SIZE))
+        x = base_model(inputs)
+        x = layers.Flatten()(x)
+        x = layers.Dense(64, activation='tanh')(x)
+        x = layers.Dense(10, activation='softmax')(x)
+        model = tf.keras.Model(inputs, x)
+        return model
 
     model_compile_args = {
         'optimizer':'adam',
@@ -557,32 +589,21 @@ def test():
     def preprocess_fn(x):
         return x / 255.
 
-    def build_xception_classifier():
-        base_model = tf.keras.applications.Xception(
-            weights='imagenet',
-            input_shape=tuple(IMG_SIZE),
-            include_top=False,
-        )
-        base_model.trainable = False
-        inputs = tf.keras.Input(shape=tuple(IMG_SIZE))
-        x = base_model(inputs)
-        x = layers.Flatten()(x)
-        x = layers.Dense(64, activation='tanh')(x)
-        x = layers.Dense(10, activation='softmax')(x)
-        model = tf.keras.Model(inputs, x)
-        return model
+    preprocess_fn = tf.keras.applications.xception.preprocess_input
+    build_classifier = build_xception_classifier
 
     exp_dataset = ExperimentDataset(dataset_name=DATASET_NAME,
                                     preprocess_fn=preprocess_fn,
                                     img_size=IMG_SIZE)
     attack_dataset = exp_dataset.get_attack_dataset()
     meta_shadow_dataset = (attack_dataset[0][:meta_shadow_amount], attack_dataset[1][:meta_shadow_amount])
+
     data_augmentation = tf.keras.Sequential(
             [tf.keras.layers.experimental.preprocessing.RandomFlip(),
-             tf.keras.layers.experimental.preprocessing.RandomRotation(0.2)]
+             tf.keras.layers.experimental.preprocessing.RandomRotation(0.1)]
         )
     meta_shadow_dataset = (np.r_[meta_shadow_dataset[0],
-                                 data_augmentation.predict(meta_shadow_dataset[0])],
+                                 data_augmentation(meta_shadow_dataset[0]).numpy()],
                            np.r_[meta_shadow_dataset[1],
                                  meta_shadow_dataset[1]])
     print(meta_shadow_dataset[0].shape)
@@ -590,8 +611,11 @@ def test():
     meta_attack_dataset = (attack_dataset[0][meta_shadow_amount:], attack_dataset[1][meta_shadow_amount:])
     np.save('attack_x.npy', meta_attack_dataset[0])
     save_sample_img(meta_attack_dataset[0][0], 'attack_sample.png')
+    save_img_from_array(meta_attack_dataset[0][0:10], './attack_samples')
+    save_img_from_array(meta_shadow_dataset[0][3600:3610], './shadow_samples')
+    print("????????")
 
-    if_meta_attack = True 
+    if_meta_attack = True
     dirty_model_path = 'dirtymodel.h5'
     if if_meta_attack:
         if os.path.exists(dirty_model_path):
@@ -603,14 +627,14 @@ def test():
             else:
                 colorperts = None
                 perts = None
-                for i in range(1):
+                for i in range(2):
                     meta = MetaAttack(
                                 surrogate_models=build_classifier(),
                                 meta_shadow_dataset=meta_shadow_dataset,
                                 meta_attack_dataset=meta_attack_dataset,
                                 target_class=0,
                                 surrogate_model_pattern='duplicate',
-                                surrogate_amount=12,
+                                surrogate_amount=2,
                                 model_compile_args=model_compile_args,
                                 training_args={
                                     'batch_size': 100,
@@ -619,10 +643,10 @@ def test():
                                 attack_current_step=i,
                                 meta_epochs=20,
                                 unroll_steps=1,
-                                pert_eps=16./255,
+                                pert_eps=0.08,
                                 color_gridshape=[16,32,32],
-                                colorpert_eps=0.02,
-                                adv_learning_rate=0.001,
+                                colorpert_eps=0.04,
+                                adv_learning_rate=10,
                                 colorperturb_smooth_lambda=0.05,
                                 verbose=True,
                                 colorperts=colorperts,
@@ -635,8 +659,13 @@ def test():
                     del meta
                     tf.keras.backend.clear_session()
                     gc.collect()
+
+                    save_img_from_array(poisons[0][10:20], './poison_samples')
+                    save_sample_img(poisons[0][0], 'poison_sample.png')
+
             training_dataset = exp_dataset.get_member_dataset(data_range=data_range)
-            x = np.r_[training_dataset[0], (poisons[0]*255).astype(np.uint8)/255.]
+            #x = np.r_[training_dataset[0], (poisons[0]*255).astype(np.uint8)/255.]
+            x = np.r_[training_dataset[0], ((poisons[0]+1)*0.5*255).astype(np.uint8)/255.*2-1]
             y = np.r_[training_dataset[1], poisons[1]]
 
             dirty_model = build_classifier()
@@ -644,6 +673,7 @@ def test():
             dirty_model.fit(x, y, **training_args, epochs=20)
             dirty_model.save(dirty_model_path)
 
+        save_img_from_array(poisons[0][10:20], './poison_samples')
         save_sample_img(poisons[0][0], 'poison_sample.png')
 
 

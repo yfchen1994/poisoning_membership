@@ -14,8 +14,10 @@ from utils import check_directory, load_model, save_model, merge_dataset
 from attack.attack_utils import save_img_from_array, save_poison_label, load_dataset, load_img_from_dir, summarize_keras_trainable_variables
 from attack.dirty_label_attack import dirty_label_attack
 from attack.clean_label_attack import clean_label_attack
+from attack.clean_label_attack_transferable import clean_label_attack_transferable
 from attack.adversarial_example_attack import adversarial_example_attack
 from models.build_models import FeatureExtractor, ExperimentDataset, TransferLearningModel
+from tensorflow_privacy.privacy.optimizers.dp_optimizer_keras import DPKerasSGDOptimizer
 
 class PoisonAttack:
     def __init__(self,
@@ -27,6 +29,8 @@ class PoisonAttack:
         self.attack_config = attack_config
         self._prepare_dataset_flag = True
         self._attack_setup()
+
+        self.save_ckpts = True
 
     def _prepare_dataset(self):
         fe = FeatureExtractor(self.poison_encoder_name,
@@ -166,18 +170,31 @@ class PoisonAttack:
                                         self.seed_amount,
                                         self.anchorpoint_amount)
         else:
-            poison_img_sub_dir = '{}/{}/{}_{}_{}'\
+            if self.attack_type == 'clean_label_transferable':
+                poison_img_sub_dir = '{}/{}_{}_{}'\
+                                    .format(self.dataset_name,
+                                            self.target_class,
+                                            self.seed_amount,
+                                            self.anchorpoint_amount)
+                poison_label_sub_dir = '{}/{}_{}_{}'\
+                                .format(self.dataset_name,
+                                        self.target_class,
+                                        self.seed_amount,
+                                        self.anchorpoint_amount)
+
+            else:
+                poison_img_sub_dir = '{}/{}/{}_{}_{}'\
+                                    .format(self.poison_encoder_name,
+                                            self.dataset_name,
+                                            self.target_class,
+                                            self.seed_amount,
+                                            self.anchorpoint_amount)
+                poison_label_sub_dir = '{}/{}/{}_{}_{}'\
                                 .format(self.poison_encoder_name,
                                         self.dataset_name,
                                         self.target_class,
                                         self.seed_amount,
                                         self.anchorpoint_amount)
-            poison_label_sub_dir = '{}/{}/{}_{}_{}'\
-                               .format(self.poison_encoder_name,
-                                       self.dataset_name,
-                                       self.target_class,
-                                       self.seed_amount,
-                                       self.anchorpoint_amount)
 
 
         self.poison_img_dir = os.path.join(poison_img_root_dir, poison_img_sub_dir)
@@ -185,6 +202,12 @@ class PoisonAttack:
 
         self.poison_label_dir = os.path.join(poison_label_root_dir, poison_label_sub_dir)
         self.poison_label_path = os.path.join(self.poison_label_dir, 'poison_label.npy')
+
+        self.poison_img_dir = self.poison_img_dir.replace('_finetuned', '')
+        self.anchorpoint_img_dir = self.anchorpoint_img_dir.replace('_finetuned', '')
+
+        self.poison_label_dir = self.poison_label_dir.replace('_finetuned', '')
+        self.poison_label_path = self.poison_label_path.replace('_finetuned', '')
 
         self.clean_model_dir = os.path.join(EXP_MODEL_ROOT_DIR,
                                              'clean_model/')
@@ -194,10 +217,14 @@ class PoisonAttack:
 
         if self.attack_type == 'clean_label':
             attack_type_str = 'clean_label_attack'
+        elif self.attack_type == 'clean_label_transferable':
+            attack_type_str = 'clean_label_transferable'
         elif self.attack_type == 'dirty_label':
             attack_type_str = 'dirty_label_attack'
         elif self.attack_type == 'adversarial_examples':
             attack_type_str = 'adversarial_examples'
+        elif self.attack_type == 'adversarial_examples_collision':
+            attack_type_str = 'adversarial_examples_collision'
         else:
             raise NotImplementedError("Unknown attack type: {}".format(self.attack_type))
             
@@ -234,7 +261,6 @@ class PoisonAttack:
                             break
 
     def get_anchorpoint_dataset(self):
-        print(self.anchorpoint_img_dir)
         imgs = load_img_from_dir(self.anchorpoint_img_dir,
                                  self.seed_amount)
         imgs = self.dataset._preprocess_imgs(imgs)
@@ -250,8 +276,8 @@ class PoisonAttack:
             # Load queries from images
             if os.path.exists(self.poison_img_dir):
                 poison_dataset = load_dataset(self.poison_img_dir,
-                                                self.poison_label_path,
-                                                self.seed_amount)
+                                              self.poison_label_path,
+                                              self.seed_amount)
                 poison_dataset = (self.dataset._preprocess_imgs(poison_dataset[0]),poison_dataset[1])
                 poison_dataset = merge_dataset(poison_dataset, balancing_dataset)
                 return poison_dataset
@@ -288,7 +314,32 @@ class PoisonAttack:
 
             return poison_dataset
             
+        if self.attack_type == 'adversarial_examples_collision':
+            def _build_surrogate_model():
+                input = tf.keras.Input(shape=self.input_shape)
+                x = FeatureExtractor('xception', input_shape=self.input_shape).model(input)
+                x = tf.keras.layers.Dense(10, activation='softmax')(x)
+                return tf.keras.Model(input, x)
 
+            poison_dataset = adversarial_example_attack(clean_model=self.get_clean_model(),#_build_surrogate_model(),
+                                                        attack_dataset=attack_dataset,
+                                                        target_class=self.target_class,
+                                                        batch_size=50,
+                                                        poison_amount=self.anchorpoint_amount)
+            if not self.output_img_flag:
+                return poison_dataset
+
+            check_directory(self.poison_img_dir)
+            save_img_from_array(poison_dataset[0],
+                                self.poison_img_dir,
+                                preprocess_type=fe.preprocess_type,
+                                preprocess_mean=fe.preprocess_mean)
+
+            check_directory(self.poison_label_dir)
+            save_poison_label(poison_dataset[1], self.poison_label_path)
+            poison_dataset = merge_dataset(poison_dataset, balancing_dataset)
+
+            return poison_dataset 
 
         if self.attack_type == 'dirty_label':
 
@@ -311,13 +362,48 @@ class PoisonAttack:
 
             return poison_dataset
 
-        poison_dataset, anchorpoint_dataset, seed_idx = clean_label_attack(encoder=encoder,
-                                                                           target_class=self.target_class,
-                                                                           attack_dataset=attack_dataset,
-                                                                           seed_amount=self.seed_amount,
-                                                                           anchorpoint_amount=self.anchorpoint_amount,
-                                                                           image_scale=fe.image_scale,
-                                                                           poison_config=self.attack_config)
+        if self.attack_type == 'clean_label':
+
+            poison_dataset, anchorpoint_dataset, seed_idx = clean_label_attack(encoder=encoder,
+                                                                            target_class=self.target_class,
+                                                                            attack_dataset=attack_dataset,
+                                                                            seed_amount=self.seed_amount,
+                                                                            anchorpoint_amount=self.anchorpoint_amount,
+                                                                            image_scale=fe.image_scale,
+                                                                            poison_config=self.attack_config)
+        
+        else:
+            def _inception_intermediate():
+                inception = tf.keras.applications.inception_v3.InceptionV3(input_shape=self.input_shape, include_top=False)
+                input = inception.input
+                output_names = ['mixed3', 'mixed4']
+                outputs = [inception.get_layer(name).output for name in output_names]
+                functors = [tf.keras.models.Model(inputs=input, outputs=out) for out in outputs]
+                return functors
+            def _mobilenet_intermediate():
+                mobilenet = tf.keras.applications.mobilenet_v2.MobileNetV2(input_shape=self.input_shape, include_top=False)
+                input = mobilenet.input
+                output_names = ['block_5_project_BN', 'block_10_project_BN']
+                outputs = [mobilenet.get_layer(name).output for name in output_names]
+                functors = [tf.keras.models.Model(inputs=input, outputs=out) for out in outputs]
+                return functors
+            def _inception_encoder():
+                inceptionv3 = tf.keras.applications.inception_v3.InceptionV3(include_top=False, input_shape=self.input_shape)
+                input = tf.keras.layers.Input(shape=self.input_shape)
+                x = inceptionv3(input)
+                x = tf.keras.layers.Flatten()(x)
+                return tf.keras.models.Model(inputs=input, outputs=x)
+
+            encoders = [FeatureExtractor(input_shape=self.input_shape, pretrained_model_name='inceptionv3').model]
+            #encoders = [_inception_encoder()]
+
+            poison_dataset, anchorpoint_dataset, seed_idx = clean_label_attack_transferable(encoders=encoders,
+                                                                            target_class=self.target_class,
+                                                                            attack_dataset=attack_dataset,
+                                                                            seed_amount=self.seed_amount,
+                                                                            anchorpoint_amount=self.anchorpoint_amount,
+                                                                            image_scale=fe.image_scale,
+                                                                            poison_config=self.attack_config) 
 
         del encoder
         gc.collect()
@@ -356,14 +442,54 @@ class PoisonAttack:
 
     def get_clean_model(self):
         print("Get clean model...")
+        print(self.clean_model_path)
         if os.path.exists(self.clean_model_path):
             return load_model(self.clean_model_path)
         else:
             clean_dataset = self.dataset.get_member_dataset()
-            tl = TransferLearningModel(self.target_encoder_name,
-                                       self.input_shape,
-                                       self.fcn_sizes)
-            tl.transfer_learning(clean_dataset)
+            if 'finetuned' in self.target_encoder_name and 'dp' in self.target_encoder_name:
+                dp_opt = DPKerasSGDOptimizer(
+                             l2_norm_clip=1.0,
+                             noise_multiplier=0.1,
+                             num_microbatches=100,
+                             learning_rate=0.1
+                         )
+                
+                tl = TransferLearningModel(self.target_encoder_name,
+                                           self.input_shape,
+                                           self.fcn_sizes,
+                                           optimizer=dp_opt,
+                                           loss_fn=tf.keras.losses.CategoricalCrossentropy(
+                                               from_logits=True, reduction=tf.losses.Reduction.NONE
+                                           ))
+            elif 'finetuned' in self.target_encoder_name:
+                tl = TransferLearningModel(self.target_encoder_name,
+                                           self.input_shape,
+                                           self.fcn_sizes,
+                                           optimizer=tf.keras.optimizers.Adam(lr=1e-5))
+            elif 'dp' in self.target_encoder_name:
+                dp_opt = DPKerasSGDOptimizer(
+                             l2_norm_clip=1.0,
+                             noise_multiplier=0.1,
+                             num_microbatches=100,
+                             learning_rate=0.1
+                         )
+                
+                tl = TransferLearningModel(self.target_encoder_name,
+                                           self.input_shape,
+                                           self.fcn_sizes,
+                                           optimizer=dp_opt,
+                                           loss_fn=tf.keras.losses.CategoricalCrossentropy(
+                                               from_logits=True, reduction=tf.losses.Reduction.NONE
+                                           ))
+            else:
+                tl = TransferLearningModel(self.target_encoder_name,
+                                           self.input_shape,
+                                           self.fcn_sizes)
+            tl.transfer_learning(clean_dataset, 
+                                 save_ckpts=self.save_ckpts, 
+                                 ckpt_info="clean_model/target_{}/".format(self.target_class)
+                                 )
             check_directory(self.clean_model_dir)
             save_model(tl.model, self.clean_model_path)
             with open(self.clean_model_path+'.history.pkl', 'wb') as handle:
@@ -372,6 +498,7 @@ class PoisonAttack:
 
     def get_poisoned_model(self):
         print("Get poisoned model...")
+        print(self.poisoned_model_path)
         if os.path.exists(self.poisoned_model_path):
             return load_model(self.poisoned_model_path)
         else:
@@ -379,11 +506,33 @@ class PoisonAttack:
             poison_dataset = self.get_poison_dataset()
             training_dataset = merge_dataset(clean_dataset, poison_dataset)
 
-            tl = TransferLearningModel(self.target_encoder_name,
-                                       self.input_shape,
-                                       self.fcn_sizes)
+            if 'finetuned' in self.target_encoder_name:
+                tl = TransferLearningModel(self.target_encoder_name,
+                                           self.input_shape,
+                                           self.fcn_sizes,
+                                           optimizer=tf.keras.optimizers.Adam(lr=1e-5))
+            elif 'dp' in self.target_encoder_name:
+                dp_opt = DPKerasSGDOptimizer(
+                             l2_norm_clip=1.0,
+                             noise_multiplier=0.1,
+                             num_microbatches=100,
+                             learning_rate=0.1
+                         )
+                
+                tl = TransferLearningModel(self.target_encoder_name,
+                                           self.input_shape,
+                                           self.fcn_sizes,
+                                           optimizer=dp_opt,
+                                           loss_fn=tf.keras.losses.CategoricalCrossentropy(
+                                               from_logits=True, reduction=tf.losses.Reduction.NONE
+                                           ))
+            else:
+                tl = TransferLearningModel(self.target_encoder_name,
+                                        self.input_shape,
+                                        self.fcn_sizes)
             summarize_keras_trainable_variables(tl.model, 'get poisoning model')
-            tl.transfer_learning(training_dataset)
+            tl.transfer_learning(training_dataset,save_ckpts=self.save_ckpts,
+                                 ckpt_info="{}/target_{}/".format(self.attack_type, self.target_class))
             summarize_keras_trainable_variables(tl.model, 'after poisoning model')
             check_directory(self.poisoned_model_dir)
             print(tl.tl_history)

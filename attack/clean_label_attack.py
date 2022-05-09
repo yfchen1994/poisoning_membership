@@ -31,11 +31,36 @@ def clean_label_attack(encoder,
     seed_x = attack_dataset[0][np.where(class_label != target_class)]
     seed_y = attack_dataset[1][np.where(class_label != target_class)]
 
+    class_num = attack_dataset[1].shape[1]
+
     if seed_amount <= 0:
         seed_amount = len(seed_x)
     if seed_amount < len(seed_x):
+        sub_seed_amount = int(seed_amount/(class_num-1))
         seed_x = seed_x[:seed_amount]
         seed_y = seed_y[:seed_amount]
+        # Make the seed dataset balanced
+        start_idx = 0
+        end_idx = start_idx + sub_seed_amount
+        for i in range(class_num):
+            if i == target_class:
+                continue
+
+            sub_x = attack_dataset[0][np.where(class_label==i)]
+            sub_y = attack_dataset[1][np.where(class_label==i)]
+
+            # The last round
+            if start_idx >= (class_num-2)*sub_seed_amount:
+                print(seed_amount-start_idx)
+                seed_x[start_idx:] = sub_x[:seed_amount-start_idx]
+                seed_y[start_idx:] = sub_y[:seed_amount-start_idx]
+            else:
+                end_idx = start_idx + sub_seed_amount
+                print(sub_x[:sub_seed_amount].shape)
+                seed_x[start_idx:end_idx] = sub_x[:sub_seed_amount]
+                seed_y[start_idx:end_idx] = sub_y[:sub_seed_amount]
+                start_idx += sub_seed_amount
+
     seed_dataset = (seed_x, seed_y)
     del seed_x, seed_y
 

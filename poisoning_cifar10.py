@@ -71,7 +71,7 @@ def calculate_mia():
     attack_config = {
         'iters': 1000,
         'learning_rate': 0.02,
-        'batch_size': 150,
+        'batch_size': 100,
         'if_selection': False
     }
 
@@ -98,6 +98,7 @@ def calculate_mia():
     clean_model_acc = {}
     dirty_model_acc = {}
     ENCODERS = ['inceptionv3', 'mobilenetv2', 'xception', 'vgg16', 'resnet50']
+    #ENCODERS = [encoder + '_finetuned' for encoder in ENCODERS]
     for encoder in ENCODERS:
         clean_model_auc[encoder] = []
         dirty_model_auc[encoder] = []
@@ -109,7 +110,8 @@ def calculate_mia():
                           poison_dataset_config,
                           attack_config)
 
-
+    seed_amount = args.seed_amount
+    print(attack_type)
     for target_class in range(10):
         for poison_encoder in ENCODERS:
             poison_config = {
@@ -119,7 +121,7 @@ def calculate_mia():
             'anchorpoint_img_dir': './poisoning_dataset_{}/anchorpoint_imgs/'.format(attack_type),
             'target_class': target_class,
             'seed_amount': seed_amount,
-            'anchorpoint_amount': 1000,
+            'anchorpoint_amount': seed_amount,
             'attack_type': attack_type,
             'fcn_sizes': [128, 10],
             'transferable_attack_flag': False,
@@ -158,8 +160,6 @@ def calculate_mia():
     with open('cifar10_{}_results_{}.pkl'.format(attack_type, args.seed_amount), 'wb') as f:
         pickle.dump(results, f)
 
-            
-    
 if __name__ == '__main__':
     #calculate_mia()
     #exit(0)

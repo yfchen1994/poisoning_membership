@@ -7,7 +7,7 @@ import yaml
 import numpy as np
 import tensorflow as tf
 import PIL
-
+from tensorflow_privacy.privacy.optimizers.dp_optimizer_keras import DPKerasSGDOptimizer
 
 DATASET_ROOT = '../datasets/'
 
@@ -30,13 +30,21 @@ def save_model(model, model_path):
     model.save(model_path)
 
 def load_model(model_path):
-    try:
+    custom_objects = {
+                     "TrainingAccuracyPerClass":TrainingAccuracyPerClass,
+                     "TrainingLossPerClass":TrainingLossPerClass,
+                     } 
+    #try:
+    if_compile = True
+    if 'dp' in model_path:
+        # There is some problem with loading and compelling the DP-trained model.
+        if_compile = False
+    if True:
         return tf.keras.models.load_model(model_path,
-                                          custom_objects={
-                                              "TrainingAccuracyPerClass":TrainingAccuracyPerClass,
-                                              "TrainingLossPerClass":TrainingLossPerClass,
-                                          })
-    except:
+                                          custom_objects=custom_objects,
+                                          compile=if_compile)
+    #except:
+    else:
         return tf.keras.models.load_model(model_path)
 
 class TrainingAccuracyPerClass(tf.keras.metrics.Metric):

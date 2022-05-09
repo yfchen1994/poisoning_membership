@@ -6,10 +6,11 @@ sys.path.append('..')
 
 import gc
 import numpy as np
-from sklearn.metrics import roc_auc_score
+from sklearn.metrics import roc_auc_score, roc_curve
 import tensorflow as tf
-
+import pickle
 import PIL
+from attack.inspect_checkpoints import inspect_checkpoints
 
 def clear_previous_kernel():
     tf.keras.backend.clear_session()
@@ -86,7 +87,7 @@ def get_l2_distance(e1, e2):
                     for v1 in e1]
     return np.array(distance)
 
-def find_nearest_embeedings(seed_embeedings, anchorpoint_embeedings):
+def find_nearest_embeedings(seed_embeedings, anchorpoint_embeedings, return_distance=False, k=10):
     """For each seed, find the nearest anchorpoint embeeding.
 
     Args:
@@ -97,8 +98,14 @@ def find_nearest_embeedings(seed_embeedings, anchorpoint_embeedings):
         tuple: (corresponding anchorpoint_embeedings, anchorpoint indices)
     """
     distance = get_l2_distance(seed_embeedings, anchorpoint_embeedings)
-    nearest_idx = np.argmin(distance, axis=1)
-    return (anchorpoint_embeedings[nearest_idx], nearest_idx)
+    nearest_idx = np.argsort(distance, axis=1)
+    print(nearest_idx[:,:k].shape)
+    if return_distance:
+        distances = np.zeros(distance.shape[0])
+        for i in range(len(distances)):
+            distances[i] = np.mean(distance[i,nearest_idx[i,:k]])
+        return distances
+    return (anchorpoint_embeedings[nearest_idx[:,0]], nearest_idx[:,0])
 
 def sort_best_match_embeeding_heuristis(anchorpoint_embeedings, seed_embeedings):
     idx1 = []
@@ -124,7 +131,7 @@ def sort_best_match_embeeding_heuristis(anchorpoint_embeedings, seed_embeedings)
     return (seed_embeedings, sort_idx)
 
 def _Mentr(preds, y):
-    fy  = np.sum(preds*y, axis=1)
+    fy = np.sum(preds*y, axis=1)
     fi = preds*(1-y)
     score = -(1-fy)*np.log(fy+1e-30)-np.sum(fi*np.log(1-fi+1e-30), axis=1)
     return score
@@ -132,7 +139,7 @@ def _Mentr(preds, y):
 def _Max(preds):
     return np.max(preds, axis=1)
 
-def mia(model, member_dataset, nonmember_dataset, metric='Mentr'):
+def mia(model, member_dataset, nonmember_dataset, metric='Mentr', if_plot_curve=False):
     member_preds = model.predict(member_dataset[0])
     nonmember_preds = model.predict(nonmember_dataset[0])
     if metric == 'Mentr':
@@ -145,7 +152,10 @@ def mia(model, member_dataset, nonmember_dataset, metric='Mentr'):
     nonmember_label = np.zeros(len(nonmember_preds))
     mia_auc = roc_auc_score(np.r_[member_label, nonmember_label],
                             np.r_[member_score, nonmember_score])
-
+    if if_plot_curve:
+        fpr, tpr, _ = roc_curve(np.r_[member_label, nonmember_label],
+                                np.r_[member_score, nonmember_score])
+    
 
     member_amount = len(member_label)
     nonmember_amount = len(nonmember_label)
@@ -154,7 +164,10 @@ def mia(model, member_dataset, nonmember_dataset, metric='Mentr'):
     print('{} Members vs. {} Non-members:'.format(member_amount, nonmember_amount))
     print('MIA AUC:{:.6f}'.format(mia_auc))
     print("/"*20)
-    return mia_auc
+    if if_plot_curve:
+        return (mia_auc, fpr, tpr)
+    else:
+        return mia_auc
 
 def evaluate_model(model, testing_dataset):
     # Get the testing accuracy
@@ -184,12 +197,40 @@ def poison_attack(poison_config,
 def check_mia(poison_config,
               poison_dataset_config,
               attack_config,
-              target_class):
+              target_class,
+              if_plot_curve=False,):
 
     from attack.main_attack import PoisonAttack
     attack = PoisonAttack(poison_config,
                           poison_dataset_config,
                           attack_config)
+
+    checkpoint_dir = "./checkpoints/clean_model/target_{}/{}".format(attack.target_class,
+                                                                     attack.target_encoder_name)
+    member_dataset = attack.dataset.get_member_dataset()
+    nonmember_dataset = attack.dataset.get_nonmember_dataset()
+    poison_dataset = attack.get_poison_dataset()
+    results_path = os.path.join(checkpoint_dir.replace('checkpoints', 'learning_dynamics'), 'learning_dynamics.pkl')
+    if os.path.exists(checkpoint_dir):
+        print("Inspecting the checkpoints of the clean model")
+        model = attack.get_clean_model()
+        inspect_checkpoints(model,
+                            checkpoint_dir,
+                            results_path,
+                            member_dataset,
+                            nonmember_dataset,
+                            poison_dataset)
+
+        checkpoint_dir = checkpoint_dir.replace('clean_model', attack.attack_type)
+        results_path = results_path.replace('clean_model', attack.attack_type)
+        print("Inspecting the checkpoints of the poisoned model")
+        inspect_checkpoints(model,
+                            checkpoint_dir,
+                            results_path,
+                            member_dataset,
+                            nonmember_dataset,
+                            poison_dataset)
+
     member_dataset = attack.dataset.get_member_dataset(target_class=target_class)
     nonmember_dataset = attack.dataset.get_nonmember_dataset(target_class=target_class)
     testing_dataset = attack.dataset.get_nonmember_dataset()
@@ -198,7 +239,12 @@ def check_mia(poison_config,
     print("Poison encoder:{}".format(attack.poison_encoder_name))
     print("Working on clean model.")
     model = attack.get_clean_model()
-    clean_auc = mia(model, member_dataset, nonmember_dataset, metric='Mentr')
+    if if_plot_curve:
+        clean_auc, fpr, tpr = mia(model, member_dataset, nonmember_dataset, metric='Mentr', if_plot_curve=True)
+        np.save('clean_fpr.npy', fpr)
+        np.save('clean_tpr.npy', tpr) 
+    else:
+        clean_auc = mia(model, member_dataset, nonmember_dataset, metric='Mentr', if_plot_curve=False)
     clean_test_acc_sub = evaluate_model(model, nonmember_dataset)
     clean_test_acc = evaluate_model(model, testing_dataset)
     print("Testing accuracy of the target class: {:.2f}% ({})"\
@@ -210,7 +256,12 @@ def check_mia(poison_config,
     print("*"*20)
     print("Poisoning model.")
     model = attack.get_poisoned_model()
-    poison_auc = mia(model, member_dataset, nonmember_dataset, metric='Mentr')
+    if if_plot_curve:
+        poison_auc, fpr, tpr = mia(model, member_dataset, nonmember_dataset, metric='Mentr', if_plot_curve=True)
+        np.save('poison_fpr.npy', fpr)
+        np.save('poison_tpr.npy', tpr)
+    else:
+        poison_auc = mia(model, member_dataset, nonmember_dataset, metric='Mentr', if_plot_curve=False)
     poisoned_test_acc_sub = evaluate_model(model, nonmember_dataset)
     poisoned_test_acc = evaluate_model(model, testing_dataset)
     print("Testing accuracy of the target class: {:.2f}% ({})"\
@@ -219,47 +270,101 @@ def check_mia(poison_config,
           .format(poisoned_test_acc*100, len(testing_dataset[0])))
 
     visualize_flag = False 
-    if poison_config['attack_type'] == 'clean_label' and visualize_flag:
-        anchorpoint_dataset = attack.get_anchorpoint_dataset()
-        print(anchorpoint_dataset[0].shape)
-        print(anchorpoint_dataset[1].shape)
-        poison_dataset = attack.get_poison_dataset()
+    if 'clean_label' in poison_config['attack_type'] and visualize_flag:
         normal_dataset = attack.dataset.get_member_dataset()
+        poison_dataset = attack.get_poison_dataset()
+        anchorpoint_dataset = attack.get_anchorpoint_dataset()
+        poison_x, poison_y = poison_dataset
+        anchorpoint_x, anchorpoint_y = anchorpoint_dataset
+        poison_x = poison_x[np.where(np.argmax(poison_y,axis=1)!=target_class)]
+        anchorpoint_x = anchorpoint_x[np.where(np.argmax(poison_y,axis=1)!=target_class)]
+        anchorpoint_y = anchorpoint_y[np.where(np.argmax(poison_y,axis=1)!=target_class)]
+        poison_y = poison_y[np.where(np.argmax(poison_y,axis=1)!=target_class)]
+
+        poison_dataset = (poison_x, poison_y)
+        anchorpoint_dataset = (anchorpoint_x, anchorpoint_y)
+
+        tsne_results = visualize_features(model=model,
+                                          clean_dataset=normal_dataset,
+                                          poison_dataset=poison_dataset,
+                                          anchorpoint_dataset=anchorpoint_dataset,
+                                          target_class=target_class,
+                                          encoder_name=attack.target_encoder_name,
+                                          attack_type=attack.attack_type,
+                                          dataset_name=poison_dataset_config['dataset_name'])
+
+    if 'dirty_label' in poison_config['attack_type'] and visualize_flag:
+        normal_dataset = attack.dataset.get_member_dataset()
+        poison_dataset = attack.get_poison_dataset()
         real_poison_amount = int((attack.dataset.num_classes-1)/attack.dataset.num_classes*attack.seed_amount)
-        visualize_features(model=model,
-                           clean_dataset=normal_dataset,
-                           poison_dataset=(poison_dataset[0][:real_poison_amount],
-                                           poison_dataset[1][:real_poison_amount]),
-                           anchorpoint_dataset=(anchorpoint_dataset[0][:real_poison_amount],
-                                                anchorpoint_dataset[1][:real_poison_amount]),
-                           target_class=target_class,
-                           encoder_name=attack.target_encoder_name,
-                           attack_type=attack.attack_type,
-                           dataset_name=poison_dataset_config['dataset_name'])
+        tsne_results = visualize_features(model=model,
+                                          clean_dataset=normal_dataset,
+                                          poison_dataset=(poison_dataset[0][:real_poison_amount],
+                                                          poison_dataset[1][:real_poison_amount]),
+                                          target_class=target_class,
+                                          encoder_name=attack.target_encoder_name,
+                                          attack_type=attack.attack_type,
+                                          dataset_name=poison_dataset_config['dataset_name'])
     elif poison_config['attack_type'] == 'adversarial_examples' and visualize_flag:
         poison_dataset = attack.get_poison_dataset()
         normal_dataset = attack.dataset.get_member_dataset()
         real_poison_amount = int((attack.dataset.num_classes-1)/attack.dataset.num_classes*attack.seed_amount)
-        visualize_features(model=model,
-                           clean_dataset=normal_dataset,
-                           poison_dataset=(poison_dataset[0][:real_poison_amount],
-                                           poison_dataset[1][:real_poison_amount]),
+        tsne_results = visualize_features(model=model,
+                                          clean_dataset=normal_dataset,
+                                          poison_dataset=(poison_dataset[0][:real_poison_amount],
+                                                          poison_dataset[1][:real_poison_amount]),
+                                          target_class=target_class,
+                                          encoder_name=attack.target_encoder_name,
+                                          attack_type=attack.attack_type,
+                                          dataset_name=poison_dataset_config['dataset_name'])
+    if visualize_flag:
+        with open('{}_{}_{}_{}_tsne_results.pkl'.format(poison_dataset_config['dataset_name'], 
+                                                    attack.target_encoder_name, 
+                                                    attack.attack_type,
+                                                    target_class), 'wb') as f:
+            pickle.dump(tsne_results, f)
+
+    measure_distance_flag = False 
+    if measure_distance_flag:
+        poison_dataset = attack.get_poison_dataset()
+        member_dataset = attack.dataset.get_member_dataset(target_class=target_class)
+        nonmember_dataset = attack.dataset.get_nonmember_dataset(target_class=target_class)
+        member_distances, nonmember_distances, member_score, nonmember_score = measure_nearest_distance(model=model,
+                           member_dataset=member_dataset,
+                           nonmember_dataset=nonmember_dataset,
+                           poison_dataset=poison_dataset,
                            target_class=target_class,
                            encoder_name=attack.target_encoder_name,
-                           attack_type=attack.attack_type,
-                           dataset_name=poison_dataset_config['dataset_name'])
+                           dataset_name=poison_dataset_config['dataset_name'],
+                           attack_type=attack.attack_type)
+        distances = {}
+        distances['member_distances'] = member_distances 
+        distances['nonmember_distances'] = nonmember_distances 
+        distances['member_score'] = member_score
+        distances['nonmember_score'] = nonmember_score
+        with open('{}_{}_{}_{}_distances.pkl'.format(poison_dataset_config['dataset_name'], 
+                                                  attack.target_encoder_name, 
+                                                  attack.attack_type,
+                                                  target_class), 'wb') as f:
+            pickle.dump(distances, f)
+
     del model
     gc.collect()
     print("Diff:{:.2f}".format(poison_auc-clean_auc))
     print('='*30)
 
+
+    # Path of the checkpoints
+    # "checkpoints/clean_model/target_{target_class}/{model_name}"
+    # "checkpoints/{attack_type}/target_{target_class}/{model_name}"
+
 def extract_features(model,
                      inputs):
+    model.summary()
     feature_extractor = tf.keras.Model(model.inputs,
-                                       model.get_layer('feature_extractor').get_output_at(1))
+                                       model.get_layer('feature_extractor').get_output_at(0))
     tf.keras.utils.plot_model(feature_extractor, 'model.png')
     return feature_extractor.predict(inputs).reshape((len(inputs),-1))
-
 
 def visualize_features(model,
                        clean_dataset,
@@ -280,7 +385,7 @@ def visualize_features(model,
     #from sklearn.manifold import TSNE
     from MulticoreTSNE import MulticoreTSNE as TSNE
 
-    compressed_features = TSNE(n_jobs=4, n_components=2, perplexity=100, n_iter=1000).fit_transform(features)
+    compressed_features = TSNE(n_jobs=4, n_components=2, perplexity=50, n_iter=5000).fit_transform(features)
     clean_compressed_features = compressed_features[:clean_dataset[0].shape[0],:]
     if anchorpoint_dataset:
         poison_compressed_features = compressed_features[clean_dataset[0].shape[0]:-anchorpoint_dataset[0].shape[0],:]
@@ -338,9 +443,22 @@ def visualize_features(model,
     plt.subplots_adjust(bottom=0.15, top=0.97, left=0.08, right=0.99)
 
     plt.savefig('{}_{}_{}_{}.png'.format(encoder_name,
-                                      dataset_name,
-                                      attack_type,
-                                      str(target_class)), bbox_inches = 'tight')
+                                         dataset_name,
+                                         attack_type,
+                                         str(target_class)), bbox_inches = 'tight')
+    
+    tsne_results = {
+        'clean_compressed_features': clean_compressed_features,
+        'clean_labels': clean_dataset[1],
+        'poison_compressed_features': poison_compressed_features,
+        'poison_labels': poison_dataset[1],
+       
+    }
+    if anchorpoint_dataset:
+        tsne_results['anchorpoint_compressed_features'] = anchorpoint_compressed_features
+        tsne_results['anchorpoint_labels'] = anchorpoint_dataset[1]
+
+    return tsne_results
 
 def test_sort_function():
     a1 = np.random.randn(40,20)
@@ -371,6 +489,38 @@ def change_img_order(anchorpoint_img_dir, seed_img_dir, seed_label_path):
     save_poison_label(seed_labels, seed_label_path)
     os.system('rm ' + os.path.join(anchorpoint_img_dir, 'idx.npy'))
     save_poison_label(seed_idx, os.path.join(seed_img_dir, 'idx.npy'))
+
+def measure_nearest_distance(model,
+                             member_dataset,
+                             nonmember_dataset,
+                             poison_dataset,
+                             target_class,
+                             encoder_name,
+                             dataset_name,
+                             attack_type,
+                             metric='Mentr'):
+    memberfeatures = extract_features(model,
+                                      member_dataset[0])
+    nonmemberfeatures = extract_features(model,
+                                         nonmember_dataset[0])
+    poison_x, poison_y = poison_dataset
+    poison_x = poison_x[np.where(np.argmax(poison_y,axis=1)!=target_class)]
+    poisonfeatures = extract_features(model,
+                                     poison_dataset[0])
+    
+    member_distances = find_nearest_embeedings(memberfeatures, poisonfeatures, return_distance=True,k=1)
+    member_distances = member_distances / memberfeatures.shape[1]
+    nonmember_distances = find_nearest_embeedings(nonmemberfeatures, poisonfeatures, return_distance=True,k=1)
+    nonmember_distances = nonmember_distances / nonmemberfeatures.shape[1]
+    member_preds = model.predict(member_dataset[0])
+    nonmember_preds = model.predict(nonmember_dataset[0])
+    if metric == 'Mentr':
+        member_score = -_Mentr(member_preds, member_dataset[1])
+        nonmember_score = -_Mentr(nonmember_preds, nonmember_dataset[1])
+    elif metric == 'max':
+        member_score = _Max(member_preds)
+        nonmember_score = _Max(nonmember_preds)
+    return (member_distances, nonmember_distances, member_score, nonmember_score)
 
 if __name__ == '__main__':
     #test_sort_function()

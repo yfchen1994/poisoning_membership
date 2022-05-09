@@ -149,9 +149,7 @@ def calculate_mia():
                           poison_dataset_config,
                           attack_config)
 
-
     for target_class in range(10):
-
 
         for poison_encoder in ENCODERS:
             poison_config = {
@@ -160,7 +158,7 @@ def calculate_mia():
             'poison_label_dir': './poisoning_dataset_{}/labels/'.format(attack_type),
             'anchorpoint_img_dir': './poisoning_dataset_{}/anchorpoint_imgs/'.format(attack_type),
             'target_class': target_class,
-            'seed_amount': seed_amount,
+            'seed_amount': args.seed_amount,
             'anchorpoint_amount': 1000,
             'attack_type': attack_type,
             'fcn_sizes': [128, 10],
@@ -201,13 +199,13 @@ def calculate_mia():
         pickle.dump(results, f)
 
 if __name__ == '__main__':
-    #calculate_mia()
-    #exit(0)
+    calculate_mia()
+    exit(0)
     #for seed_amount in [100, 200, 500]:
     #transferable_test()
     INPUT_SIZE = (96, 96, 3)
 
-    attack_type = 'clean_label'
+    attack_type = args.attack_type
 
     for target_class in [args.target_class]:
 
@@ -248,4 +246,3 @@ if __name__ == '__main__':
                     poison_attack(poison_config,
                                 poison_dataset_config,
                                 attack_config)
-

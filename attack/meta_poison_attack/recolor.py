@@ -26,7 +26,7 @@ def recolor(inputs, colorperts, name=None, grid=None):
         grid = tf.cast(grid, inputs.dtype)
 
     @tf.function
-    def _recolor(arg):
+    def _recolor1(arg):
         # We suppose the pixel values are rescaled to [0, 1]
         img, yref = arg  # img and colorpert shape [ncolorres, ncolorres, ncolorres, 3]
         #img = tfp.math.batch_interp_regular_nd_grid(img, xrefmin, xrefmax, yref, axis=-4)
@@ -34,6 +34,14 @@ def recolor(inputs, colorperts, name=None, grid=None):
         img = tf.reshape(img, [img_shape[0], -1, 3])
         img = trilinear.interpolate(grid_3d=yref, sampling_points=img)
         img = tf.reshape(img, img_shape)
+        return img
+
+    def _recolor(arg):
+        img, colorpert = arg  # img and colorpert shape [ncolorres, ncolorres, ncolorres, 3]
+        img = tf.image.rgb_to_yuv(img)
+        yref = tf.cast(grid, dtype=colorpert.dtype) + colorpert
+        img = tfp.math.batch_interp_regular_nd_grid(img, xrefmin, xrefmax, yref, axis=-4)
+        # img = tf.image.yuv_to_rgb(img) * 255.
         return img
 
     @tf.function
@@ -85,23 +93,32 @@ def recolor(inputs, colorperts, name=None, grid=None):
         outputs = tf.reduce_sum([value * coeff for value, coeff in zip (grid_values, coeffs)], axis=0)
         return outputs
 
-    #@tf.function
-    #def func(elements):
-    #    return tf.map_fn(_recolor, elements, dtype=inputs.dtype, parallel_iterations=500, name=name)
+    @tf.function
+    def func(elements):
+        return tf.cast(tf.map_fn(_recolor, elements, dtype=inputs.dtype, parallel_iterations=500, name=name),
+                       dtype=inputs.dtype)
 
-    yref = grid + colorperts
+    #yref = grid + colorperts
 
-    outputs = trilinear_interpolation(tf.image.rgb_to_yuv(inputs), yref, xrefmin, xrefmax)
+    inputs = (1+inputs) * 0.5
+
+    #outputs = trilinear_interpolation(tf.image.rgb_to_yuv(inputs), yref, xrefmin, xrefmax)
+    #outputs = tf.map_fn(_recolor, (inputs, colorperts), dtype=colorperts.dtype, parallel_iterations=500, name=name)
+    outputs = func((inputs, colorperts))
+
 
     outputs = tf.clip_by_value(outputs, xrefmin, xrefmax)
 
     #outputs = _recolor((inputs, yref))
     #outputs = func((inputs, yref))
     outputs = tf.image.yuv_to_rgb(outputs)
+    outputs = tf.clip_by_value(outputs, 0., 1.)
+    outputs = outputs*2-1
+
     return outputs, grid
 
 
-@tf.function
+#@tf.function
 def smoothloss(colorperts):
     gridshape = colorperts.shape.as_list()[1:]
     '''get the mean norm of the discrete gradients along each direction in colorspace'''
@@ -110,5 +127,5 @@ def smoothloss(colorperts):
     dpert_u = colorperts[:, :, :-1, :, :] - colorperts[:, :, 1:, :, :]
     dpert_v = colorperts[:, :, :, :-1, :] - colorperts[:, :, :, 1:, :]
     flattened = tf.concat([tf.reshape((d * ncolorres) ** 2, [-1]) for d, ncolorres in zip([dpert_y, dpert_u, dpert_v], gridshape)], axis=0)
-    smoothloss = tf.reduce_mean(flattened)
+    smoothloss = tf.reduce_mean(flattened) #/ tf.cast(tf.math.reduce_prod(gridshape),dtype=colorperts.dtype)
     return smoothloss

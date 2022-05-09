@@ -121,10 +121,9 @@ def calculate_mia():
     with open('celeba_{}_results_{}.pkl'.format(attack_type, args.seed_amount), 'wb') as f:
         pickle.dump(results, f)
 
-
 if __name__ == '__main__':
-    #calculate_mia()
-    #exit(0)
+    calculate_mia()
+    exit(0)
 
     INPUT_SIZE = (96, 96, 3)
     FACE_ATTRS = ['Attractive']

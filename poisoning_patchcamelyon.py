@@ -123,8 +123,8 @@ def calculate_mia():
         pickle.dump(results, f)
 
 if __name__ == '__main__':
-    #calculate_mia()
-    #exit(0)
+    calculate_mia()
+    exit(0)
     INPUT_SIZE = (96, 96, 3)
 
     poison_dataset_config = {

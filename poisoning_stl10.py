@@ -17,7 +17,7 @@ os.environ["TF_FORCE_GPU_ALLOW_GROWTH"] = "true"
 
 import tensorflow as tf
 from attack.main_attack import PoisonAttack
-from attack.attack_utils import mia, check_mia, poison_attack
+from attack.attack_utils import mia, check_mia, poison_attack, measure_nearest_distance
 
 import numpy as np
 import gc
@@ -112,7 +112,7 @@ def calculate_mia():
             'anchorpoint_img_dir': './poisoning_dataset_{}/anchorpoint_imgs/'.format(attack_type),
             'target_class': target_class,
             'seed_amount': seed_amount,
-            'anchorpoint_amount': 400,
+            'anchorpoint_amount': args.seed_amount,
             'attack_type': attack_type,
             'fcn_sizes': [128, 10],
             'transferable_attack_flag': False,
@@ -153,8 +153,8 @@ def calculate_mia():
 
 if __name__ == '__main__':
     #for seed_amount in [40, 80, 200]:
-    #calculate_mia()
-    #exit(0)
+    calculate_mia()
+    exit(0)
     INPUT_SIZE = (96, 96, 3)
 
     poison_dataset_config = {
