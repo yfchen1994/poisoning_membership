@@ -14,6 +14,7 @@ from utils import check_directory, load_model, save_model, merge_dataset
 from attack.attack_utils import save_img_from_array, save_poison_label, load_dataset, load_img_from_dir, summarize_keras_trainable_variables
 from attack.dirty_label_attack import dirty_label_attack
 from attack.clean_label_attack import clean_label_attack
+from attack.watermarking_attack import watermarking_attack
 from attack.clean_label_attack_transferable import clean_label_attack_transferable
 from attack.adversarial_example_attack import adversarial_example_attack
 from models.build_models import FeatureExtractor, ExperimentDataset, TransferLearningModel
@@ -117,6 +118,27 @@ class PoisonAttack:
         self.fcn_sizes = self.poison_config['fcn_sizes']
         self.attack_type = self.poison_config['attack_type']
 
+        if self.attack_type == 'clean_label':
+            attack_type_str = 'clean_label_attack'
+        elif self.attack_type == 'clean_label_transferable':
+            attack_type_str = 'clean_label_transferable'
+        elif self.attack_type == 'dirty_label':
+            attack_type_str = 'dirty_label_attack'
+        elif self.attack_type == 'adversarial_examples':
+            attack_type_str = 'adversarial_examples'
+        elif self.attack_type == 'adversarial_examples_collision':
+            attack_type_str = 'adversarial_examples_collision'
+        elif 'watermarking' in self.attack_type:
+            if 'opacity' in self.attack_config.keys():
+                opacity = self.attack_config['opacity']
+            else:
+                opacity = 0.1
+            self.attack_type = 'watermarking_{}'.format(opacity)
+            attack_type_str = 'watermarking_{}'.format(opacity)
+            
+        else:
+            raise NotImplementedError("Unknown attack type: {}".format(self.attack_type))
+
         anchorpoint_img_root_dir = self.poison_config['anchorpoint_img_dir']
 
         if 'output_img_flag' in self.poison_config.keys():
@@ -209,24 +231,17 @@ class PoisonAttack:
         self.poison_label_dir = self.poison_label_dir.replace('_finetuned', '')
         self.poison_label_path = self.poison_label_path.replace('_finetuned', '')
 
+        self.poison_img_dir = self.poison_img_dir.replace('dp_', '')
+        self.anchorpoint_img_dir = self.anchorpoint_img_dir.replace('dp_', '')
+
+        self.poison_label_dir = self.poison_label_dir.replace('dp_', '')
+        self.poison_label_path = self.poison_label_path.replace('dp_', '')
+
         self.clean_model_dir = os.path.join(EXP_MODEL_ROOT_DIR,
                                              'clean_model/')
         self.clean_model_path = os.path.join(self.clean_model_dir,
                                              '{}_{}.h5'.format(self.dataset_name,
                                                                self.poison_encoder_name))
-
-        if self.attack_type == 'clean_label':
-            attack_type_str = 'clean_label_attack'
-        elif self.attack_type == 'clean_label_transferable':
-            attack_type_str = 'clean_label_transferable'
-        elif self.attack_type == 'dirty_label':
-            attack_type_str = 'dirty_label_attack'
-        elif self.attack_type == 'adversarial_examples':
-            attack_type_str = 'adversarial_examples'
-        elif self.attack_type == 'adversarial_examples_collision':
-            attack_type_str = 'adversarial_examples_collision'
-        else:
-            raise NotImplementedError("Unknown attack type: {}".format(self.attack_type))
             
 
         self.poisoned_model_dir = os.path.join(EXP_MODEL_ROOT_DIR,
@@ -260,6 +275,11 @@ class PoisonAttack:
                             self.anchorpoint_img_dir = self.poison_img_dir.replace('imgs', 'anchorpoint_imgs')
                             break
 
+            if 'watermarking' in self.attack_type:
+                self.poison_img_dir = self.poison_img_dir.replace('watermarking', self.attack_type)
+                self.poison_label_path = self.poison_label_path.replace('watermarking', self.attack_type)
+                self.anchorpoint_img_dir = self.anchorpoint_img_dir.replace('watermarking', self.attack_type)
+
     def get_anchorpoint_dataset(self):
         imgs = load_img_from_dir(self.anchorpoint_img_dir,
                                  self.seed_amount)
@@ -268,10 +288,10 @@ class PoisonAttack:
         return (imgs, labels)
 
     def get_poison_dataset(self):
+        print('Fetching poisoning dataset ({} attack)...'.format(self.attack_type))
+        print(self.poison_img_dir)
         balancing_dataset = self.dataset.get_attack_dataset(target_class=self.target_class,
                                                             data_range=[-self.balancing_amount,None])
-        print('balancing dataset...')
-        print(balancing_dataset[0].shape)
         if self.output_img_flag:
             # Load queries from images
             if os.path.exists(self.poison_img_dir):
@@ -365,12 +385,40 @@ class PoisonAttack:
         if self.attack_type == 'clean_label':
 
             poison_dataset, anchorpoint_dataset, seed_idx = clean_label_attack(encoder=encoder,
-                                                                            target_class=self.target_class,
-                                                                            attack_dataset=attack_dataset,
-                                                                            seed_amount=self.seed_amount,
-                                                                            anchorpoint_amount=self.anchorpoint_amount,
-                                                                            image_scale=fe.image_scale,
-                                                                            poison_config=self.attack_config)
+                                                                               target_class=self.target_class,
+                                                                               attack_dataset=attack_dataset,
+                                                                               seed_amount=self.seed_amount,
+                                                                               anchorpoint_amount=self.anchorpoint_amount,
+                                                                               image_scale=fe.image_scale,
+                                                                               poison_config=self.attack_config)
+        elif 'watermarking' in self.attack_type:
+            # First get the poisoning dataset
+            attack_type = self.attack_type
+            self.poison_img_dir = self.poison_img_dir.replace(self.attack_type, 'clean_label')
+            self.poison_label_path = self.poison_label_path.replace(self.attack_type, 'clean_label')
+            self.anchorpoint_img_dir = self.anchorpoint_img_dir.replace(self.attack_type, 'clean_label')
+            self.attack_type = 'clean_label'
+
+            if 'opacity' in self.attack_config.keys():
+                opacity = self.attack_config['opacity']
+                # Remove the opacity parameter, so as to be compatible to the clean-label attack.
+                self.attack_config.pop('opacity', None)
+            else:
+                opacity = 0.1
+
+            poison_dataset = self.get_poison_dataset()
+            anchorpoint_dataset = self.get_anchorpoint_dataset()
+            seed_idx = np.load(os.path.join(self.poison_img_dir, 'idx.npy')) 
+
+            poison_dataset = watermarking_attack(poison_dataset=poison_dataset,
+                                                 anchorpoint_dataset=anchorpoint_dataset,
+                                                 opacity=opacity)
+            
+            self.poison_img_dir = self.poison_img_dir.replace('clean_label', attack_type)
+            self.poison_label_path = self.poison_label_path.replace('clean_label', attack_type)
+            self.poison_label_dir = os.path.dirname(self.poison_label_path)
+            self.anchorpoint_img_dir = self.anchorpoint_img_dir.replace('clean_label', attack_type)
+            self.attack_type = attack_type 
         
         else:
             def _inception_intermediate():
@@ -426,6 +474,7 @@ class PoisonAttack:
                                 preprocess_mean=fe.preprocess_mean)
 
             check_directory(self.poison_label_dir)
+            print(self.poison_label_dir)
             poison_label = poison_dataset[1]
             save_poison_label(poison_label, self.poison_label_path)
 
@@ -450,7 +499,7 @@ class PoisonAttack:
             if 'finetuned' in self.target_encoder_name and 'dp' in self.target_encoder_name:
                 dp_opt = DPKerasSGDOptimizer(
                              l2_norm_clip=1.0,
-                             noise_multiplier=0.1,
+                             noise_multiplier=3,
                              num_microbatches=100,
                              learning_rate=0.1
                          )
@@ -488,7 +537,7 @@ class PoisonAttack:
                                            self.fcn_sizes)
             tl.transfer_learning(clean_dataset, 
                                  save_ckpts=self.save_ckpts, 
-                                 ckpt_info="clean_model/target_{}/".format(self.target_class)
+                                 ckpt_info="{}/clean_model/".format(self.dataset_name)
                                  )
             check_directory(self.clean_model_dir)
             save_model(tl.model, self.clean_model_path)
@@ -532,7 +581,9 @@ class PoisonAttack:
                                         self.fcn_sizes)
             summarize_keras_trainable_variables(tl.model, 'get poisoning model')
             tl.transfer_learning(training_dataset,save_ckpts=self.save_ckpts,
-                                 ckpt_info="{}/target_{}/".format(self.attack_type, self.target_class))
+                                 ckpt_info="{}/{}/target_{}/".format(self.dataset_name,
+                                                                     self.attack_type, 
+                                                                     self.target_class))
             summarize_keras_trainable_variables(tl.model, 'after poisoning model')
             check_directory(self.poisoned_model_dir)
             print(tl.tl_history)
