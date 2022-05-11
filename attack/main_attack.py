@@ -519,7 +519,7 @@ class PoisonAttack:
             elif 'dp' in self.target_encoder_name:
                 dp_opt = DPKerasSGDOptimizer(
                              l2_norm_clip=1.0,
-                             noise_multiplier=0.1,
+                             noise_multiplier=3,
                              num_microbatches=100,
                              learning_rate=0.1
                          )
@@ -563,7 +563,7 @@ class PoisonAttack:
             elif 'dp' in self.target_encoder_name:
                 dp_opt = DPKerasSGDOptimizer(
                              l2_norm_clip=1.0,
-                             noise_multiplier=0.1,
+                             noise_multiplier=3,
                              num_microbatches=100,
                              learning_rate=0.1
                          )
