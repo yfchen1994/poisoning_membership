@@ -206,7 +206,7 @@ def check_mia(poison_config,
 
     del model
     gc.collect()
-    print("Diff:{:.2f}".format(poison_auc-clean_auc))
+    print("MIA AUC Diff:{:.2f}".format(poison_auc-clean_auc))
     print('='*30)
 
 if __name__ == '__main__':

@@ -1,4 +1,4 @@
-# Readme
+# README
 
 This folder contains the implementation of **Amplifying Membership Exposure via Data Poisoning**. 
 
@@ -35,11 +35,21 @@ dataset
 ```
 
 ## Basic Usage
+File `poisoning_attack.py` allows to run our poisoning attacks.
 
+Example:
+```
+python poisoing_attack.py --target_class 0 \
+                          --dataset cifar10 \
+                          --encoder xception \
+                          --seed_amount 1000 \
+                          --attack_type clean_label \
+                          --device_no 0 \
+```
 
 ## Example Attack 
 
-We provide example attacks in `attack_example.sh`. Can see the results by directly run:
+We provide example attacks in `attack_example.sh`. Directly run:
 ```
 ./attack_example.sh
 ```
