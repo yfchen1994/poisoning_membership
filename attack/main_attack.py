@@ -14,10 +14,8 @@ from utils import check_directory, load_model, save_model, merge_dataset
 from attack.attack_utils import save_img_from_array, save_poison_label, load_dataset, load_img_from_dir, summarize_keras_trainable_variables
 from attack.dirty_label_attack import dirty_label_attack
 from attack.clean_label_attack import clean_label_attack
-from attack.watermarking_attack import watermarking_attack
-from attack.clean_label_attack_transferable import clean_label_attack_transferable
-from attack.adversarial_example_attack import adversarial_example_attack
-from models.build_models import FeatureExtractor, ExperimentDataset, TransferLearningModel
+from build_models import FeatureExtractor, TransferLearningModel
+from prepare_data import ExperimentDataset
 from tensorflow_privacy import DPKerasAdamOptimizer
 
 DP_SGD_HYPERPARAMETERS = {
@@ -38,7 +36,7 @@ class PoisonAttack:
         self._prepare_dataset_flag = True
         self._attack_setup()
 
-        self.save_ckpts = True
+        self.save_ckpts = False
 
     def _prepare_dataset(self):
         fe = FeatureExtractor(self.poison_encoder_name,
@@ -99,7 +97,7 @@ class PoisonAttack:
                        'poison_label_dir',
                        'target_class',
                        'seed_amount',
-                       'anchorpoint_amount',
+                       'base_amount',
                        'fcn_sizes',
                        'attack_type']
 
@@ -121,14 +119,12 @@ class PoisonAttack:
         poison_label_root_dir = self.poison_config['poison_label_dir']
         self.target_class = self.poison_config['target_class']
         self.seed_amount = self.poison_config['seed_amount']
-        self.anchorpoint_amount = self.poison_config['anchorpoint_amount']
+        self.base_amount = self.poison_config['base_amount']
         self.fcn_sizes = self.poison_config['fcn_sizes']
         self.attack_type = self.poison_config['attack_type']
 
         if self.attack_type == 'clean_label':
             attack_type_str = 'clean_label_attack'
-        elif self.attack_type == 'clean_label_transferable':
-            attack_type_str = 'clean_label_transferable'
         elif self.attack_type == 'dirty_label':
             attack_type_str = 'dirty_label_attack'
         elif self.attack_type == 'adversarial_examples':
@@ -146,28 +142,12 @@ class PoisonAttack:
         else:
             raise NotImplementedError("Unknown attack type: {}".format(self.attack_type))
 
-        anchorpoint_img_root_dir = self.poison_config['anchorpoint_img_dir']
+        base_img_root_dir = self.poison_config['base_img_dir']
 
         if 'output_img_flag' in self.poison_config.keys():
             self.output_img_flag = self.poison_config['output_img_flag']
-        if 'transferable_attack_flag' in self.poison_config.keys():
-            self.transferable_attack_flag = self.poison_config['transferable_attack_flag']
-        else:
-            self.transferable_attack_flag = False
 
-        if self.transferable_attack_flag:
-            if self.poison_config['target_encoder_name'] == self.poison_encoder_name:
-                self.transferable_attack_flag = False
-                self.target_encoder_name = self.poison_config['poison_encoder_name']
-            else:
-                self.target_encoder_name = self.poison_config['target_encoder_name']
-                print("="*10)
-                ("Transferable attack...")
-                print("Target encoder: {}".format(self.target_encoder_name))
-                print("Poisoning encoder: {}".format(self.poison_encoder_name))
-                print("="*10)
-        else:
-            self.target_encoder_name = self.poison_config['poison_encoder_name']
+        self.target_encoder_name = self.poison_config['poison_encoder_name']
 
         self.dataset_name = self.poison_dataset_config['dataset_name']
         self.input_shape = self.poison_dataset_config['input_shape']
@@ -182,64 +162,51 @@ class PoisonAttack:
         # Balancing the attack result
         self.poison_amount = self.seed_amount
         self.seed_amount = self.seed_amount - int(self.seed_amount/self.dataset.num_classes)
-        self.anchorpoint_amount = self.seed_amount
-        self.anchorpoint_amount = np.min([self.anchorpoint_amount,
+        self.base_amount = self.seed_amount
+        self.base_amount = np.min([self.base_amount,
                                           len(self.dataset.get_attack_dataset(target_class=self.target_class)[1])])
-        self.balancing_amount = np.max([self.poison_amount - self.anchorpoint_amount, 0])
+        self.balancing_amount = np.max([self.poison_amount - self.base_amount, 0])
 
         if self.attack_type == 'dirty_label':
             poison_img_sub_dir = '{}/{}_{}_{}'\
                                 .format(self.dataset_name,
                                         self.target_class,
                                         self.seed_amount,
-                                        self.anchorpoint_amount)
+                                        self.base_amount)
             poison_label_sub_dir = '{}/{}_{}_{}'\
                                 .format(self.dataset_name,
                                         self.target_class,
                                         self.seed_amount,
-                                        self.anchorpoint_amount)
+                                        self.base_amount)
         else:
-            if self.attack_type == 'clean_label_transferable':
-                poison_img_sub_dir = '{}/{}_{}_{}'\
-                                    .format(self.dataset_name,
-                                            self.target_class,
-                                            self.seed_amount,
-                                            self.anchorpoint_amount)
-                poison_label_sub_dir = '{}/{}_{}_{}'\
-                                .format(self.dataset_name,
-                                        self.target_class,
-                                        self.seed_amount,
-                                        self.anchorpoint_amount)
-
-            else:
-                poison_img_sub_dir = '{}/{}/{}_{}_{}'\
+            poison_img_sub_dir = '{}/{}/{}_{}_{}'\
                                     .format(self.poison_encoder_name,
                                             self.dataset_name,
                                             self.target_class,
                                             self.seed_amount,
-                                            self.anchorpoint_amount)
-                poison_label_sub_dir = '{}/{}/{}_{}_{}'\
-                                .format(self.poison_encoder_name,
+                                            self.base_amount)
+            poison_label_sub_dir = '{}/{}/{}_{}_{}'\
+                                    .format(self.poison_encoder_name,
                                         self.dataset_name,
                                         self.target_class,
                                         self.seed_amount,
-                                        self.anchorpoint_amount)
+                                        self.base_amount)
 
 
         self.poison_img_dir = os.path.join(poison_img_root_dir, poison_img_sub_dir)
-        self.anchorpoint_img_dir = os.path.join(anchorpoint_img_root_dir, poison_img_sub_dir)
+        self.base_img_dir = os.path.join(base_img_root_dir, poison_img_sub_dir)
 
         self.poison_label_dir = os.path.join(poison_label_root_dir, poison_label_sub_dir)
         self.poison_label_path = os.path.join(self.poison_label_dir, 'poison_label.npy')
 
         self.poison_img_dir = self.poison_img_dir.replace('_finetuned', '')
-        self.anchorpoint_img_dir = self.anchorpoint_img_dir.replace('_finetuned', '')
+        self.base_img_dir = self.base_img_dir.replace('_finetuned', '')
 
         self.poison_label_dir = self.poison_label_dir.replace('_finetuned', '')
         self.poison_label_path = self.poison_label_path.replace('_finetuned', '')
 
         self.poison_img_dir = self.poison_img_dir.replace('dp_', '')
-        self.anchorpoint_img_dir = self.anchorpoint_img_dir.replace('dp_', '')
+        self.base_img_dir = self.base_img_dir.replace('dp_', '')
 
         self.poison_label_dir = self.poison_label_dir.replace('dp_', '')
         self.poison_label_path = self.poison_label_path.replace('dp_', '')
@@ -255,15 +222,9 @@ class PoisonAttack:
                                                attack_type_str,
                                                poison_img_sub_dir)
 
-        if self.transferable_attack_flag:
-            self.poisoned_model_path = os.path.join(self.poisoned_model_dir,
-                                                    '{}_{}_{}_poisoned_model.h5'.format(self.dataset_name,
-                                                                                        self.target_encoder_name,
-                                                                                        self.poison_encoder_name))
-        else:
-            self.poisoned_model_path = os.path.join(self.poisoned_model_dir,
-                                                    '{}_{}_poisoned_model.h5'.format(self.dataset_name,
-                                                                                    self.poison_encoder_name))
+        self.poisoned_model_path = os.path.join(self.poisoned_model_dir,
+                                                '{}_{}_poisoned_model.h5'.format(self.dataset_name,
+                                                                                 self.poison_encoder_name))
 
         if self.output_img_flag:
             # Find whether there exist a poisoning dataset whose poison amount
@@ -279,16 +240,16 @@ class PoisonAttack:
                             # Change the poisoning label path.
                             self.poison_label_path = os.path.join(self.poison_img_dir.replace('imgs', 'labels'),
                                                                   'poison_label.npy')
-                            self.anchorpoint_img_dir = self.poison_img_dir.replace('imgs', 'anchorpoint_imgs')
+                            self.base_img_dir = self.poison_img_dir.replace('imgs', 'base_imgs')
                             break
 
             if 'watermarking' in self.attack_type:
                 self.poison_img_dir = self.poison_img_dir.replace('watermarking', self.attack_type)
                 self.poison_label_path = self.poison_label_path.replace('watermarking', self.attack_type)
-                self.anchorpoint_img_dir = self.anchorpoint_img_dir.replace('watermarking', self.attack_type)
+                self.base_img_dir = self.base_img_dir.replace('watermarking', self.attack_type)
 
-    def get_anchorpoint_dataset(self):
-        imgs = load_img_from_dir(self.anchorpoint_img_dir,
+    def get_base_dataset(self):
+        imgs = load_img_from_dir(self.base_img_dir,
                                  self.seed_amount)
         imgs = self.dataset._preprocess_imgs(imgs)
         labels = self.dataset._to_onehot(self.target_class*np.ones((len(imgs),1)))
@@ -325,7 +286,7 @@ class PoisonAttack:
             poison_dataset = adversarial_example_attack(clean_model=self.get_clean_model(),
                                                         attack_dataset=attack_dataset,
                                                         target_class=self.target_class,
-                                                        poison_amount=self.anchorpoint_amount)
+                                                        poison_amount=self.base_amount)
             if not self.output_img_flag:
                 return poison_dataset
 
@@ -352,7 +313,7 @@ class PoisonAttack:
                                                         attack_dataset=attack_dataset,
                                                         target_class=self.target_class,
                                                         batch_size=50,
-                                                        poison_amount=self.anchorpoint_amount)
+                                                        poison_amount=self.base_amount)
             if not self.output_img_flag:
                 return poison_dataset
 
@@ -372,7 +333,7 @@ class PoisonAttack:
 
             poison_dataset = dirty_label_attack(target_class=self.target_class,
                                                 attack_dataset=attack_dataset,
-                                                poison_amount=self.anchorpoint_amount)
+                                                poison_amount=self.base_amount)
 
             if not self.output_img_flag:
                 return poison_dataset
@@ -391,74 +352,16 @@ class PoisonAttack:
 
         if self.attack_type == 'clean_label':
 
-            poison_dataset, anchorpoint_dataset, seed_idx = clean_label_attack(encoder=encoder,
-                                                                               target_class=self.target_class,
-                                                                               attack_dataset=attack_dataset,
-                                                                               seed_amount=self.seed_amount,
-                                                                               anchorpoint_amount=self.anchorpoint_amount,
-                                                                               image_scale=fe.image_scale,
-                                                                               poison_config=self.attack_config)
-        elif 'watermarking' in self.attack_type:
-            # First get the poisoning dataset
-            attack_type = self.attack_type
-            self.poison_img_dir = self.poison_img_dir.replace(self.attack_type, 'clean_label')
-            self.poison_label_path = self.poison_label_path.replace(self.attack_type, 'clean_label')
-            self.anchorpoint_img_dir = self.anchorpoint_img_dir.replace(self.attack_type, 'clean_label')
-            self.attack_type = 'clean_label'
-
-            if 'opacity' in self.attack_config.keys():
-                opacity = self.attack_config['opacity']
-                # Remove the opacity parameter, so as to be compatible to the clean-label attack.
-                self.attack_config.pop('opacity', None)
-            else:
-                opacity = 0.1
-
-            poison_dataset = self.get_poison_dataset()
-            anchorpoint_dataset = self.get_anchorpoint_dataset()
-            seed_idx = np.load(os.path.join(self.poison_img_dir, 'idx.npy')) 
-
-            poison_dataset = watermarking_attack(poison_dataset=poison_dataset,
-                                                 anchorpoint_dataset=anchorpoint_dataset,
-                                                 opacity=opacity)
-            
-            self.poison_img_dir = self.poison_img_dir.replace('clean_label', attack_type)
-            self.poison_label_path = self.poison_label_path.replace('clean_label', attack_type)
-            self.poison_label_dir = os.path.dirname(self.poison_label_path)
-            self.anchorpoint_img_dir = self.anchorpoint_img_dir.replace('clean_label', attack_type)
-            self.attack_type = attack_type 
-        
+            poison_dataset, base_dataset  = clean_label_attack(encoder=encoder,
+                                                               target_class=self.target_class,
+                                                               attack_dataset=attack_dataset,
+                                                               seed_amount=self.seed_amount,
+                                                               base_amount=self.base_amount,
+                                                               image_scale=fe.image_scale,
+                                                               poison_config=self.attack_config)
         else:
-            def _inception_intermediate():
-                inception = tf.keras.applications.inception_v3.InceptionV3(input_shape=self.input_shape, include_top=False)
-                input = inception.input
-                output_names = ['mixed3', 'mixed4']
-                outputs = [inception.get_layer(name).output for name in output_names]
-                functors = [tf.keras.models.Model(inputs=input, outputs=out) for out in outputs]
-                return functors
-            def _mobilenet_intermediate():
-                mobilenet = tf.keras.applications.mobilenet_v2.MobileNetV2(input_shape=self.input_shape, include_top=False)
-                input = mobilenet.input
-                output_names = ['block_5_project_BN', 'block_10_project_BN']
-                outputs = [mobilenet.get_layer(name).output for name in output_names]
-                functors = [tf.keras.models.Model(inputs=input, outputs=out) for out in outputs]
-                return functors
-            def _inception_encoder():
-                inceptionv3 = tf.keras.applications.inception_v3.InceptionV3(include_top=False, input_shape=self.input_shape)
-                input = tf.keras.layers.Input(shape=self.input_shape)
-                x = inceptionv3(input)
-                x = tf.keras.layers.Flatten()(x)
-                return tf.keras.models.Model(inputs=input, outputs=x)
-
-            encoders = [FeatureExtractor(input_shape=self.input_shape, pretrained_model_name='inceptionv3').model]
-            #encoders = [_inception_encoder()]
-
-            poison_dataset, anchorpoint_dataset, seed_idx = clean_label_attack_transferable(encoders=encoders,
-                                                                            target_class=self.target_class,
-                                                                            attack_dataset=attack_dataset,
-                                                                            seed_amount=self.seed_amount,
-                                                                            anchorpoint_amount=self.anchorpoint_amount,
-                                                                            image_scale=fe.image_scale,
-                                                                            poison_config=self.attack_config) 
+            print("Unknown attack type!")
+            exit(0)
 
         del encoder
         gc.collect()
@@ -470,13 +373,11 @@ class PoisonAttack:
                                 self.poison_img_dir,
                                 preprocess_type=fe.preprocess_type,
                                 preprocess_mean=fe.preprocess_mean)
-            np.save(os.path.join(self.poison_img_dir, 'idx.npy'),
-                    seed_idx)
-
-            check_directory(self.anchorpoint_img_dir)
-            anchorpoints = anchorpoint_dataset[0]
-            save_img_from_array(anchorpoints,
-                                self.anchorpoint_img_dir,
+                                
+            check_directory(self.base_img_dir)
+            bases = base_dataset[0]
+            save_img_from_array(bases,
+                                self.base_img_dir,
                                 preprocess_type=fe.preprocess_type,
                                 preprocess_mean=fe.preprocess_mean)
 
@@ -598,7 +499,6 @@ class PoisonAttack:
                                                                      self.target_class))
             summarize_keras_trainable_variables(tl.model, 'after poisoning model')
             check_directory(self.poisoned_model_dir)
-            print(tl.tl_history)
             with open(self.poisoned_model_path+'.history.pkl', 'wb') as handle:
                 pickle.dump(tl.tl_history, handle)
             save_model(tl.model, self.poisoned_model_path)

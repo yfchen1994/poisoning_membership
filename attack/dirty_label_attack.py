@@ -27,7 +27,6 @@ def dirty_label_attack(target_class,
 
     data, label = attack_dataset
     label = np.argmax(label, axis=1)
-    # Select the poisons from the attacker's dataset.
     poison_data = data[np.where(label == target_class)]
     
     if poison_amount == 0:
@@ -50,7 +49,7 @@ def dirty_label_attack(target_class,
         poison_label = np.random.choice(label_range, size=poison_amount, replace=True)
         poison_label = tf.keras.utils.to_categorical(poison_label, num_classes=num_classes)
     else:
-        #TODO: We need to design some rules to change the label
+        # Furture work
         exit(0)
 
     poison_dataset = (poison_data, poison_label)

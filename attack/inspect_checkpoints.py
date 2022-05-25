@@ -28,17 +28,6 @@ def evaluate_model(model, dataset):
     # Currently, some trained models cannot be compiled correctly.
     # So, here we implement the evaluate_model function to help
     # evaluate the accuracy and loss of the model.
-    """
-    x, y = dataset
-    preds = model.predict(x)
-    
-    # Calculate accuray
-    acc = np.sum(np.argmax(y, axis=1)==np.argmax(preds, axis=1)) / len(y)
-    # Calculate the categorical loss entropy
-    cce = tf.keras.losses.CategoricalCrossentropy()
-    cce_loss = cce(y, preds).numpy()
-    return (acc, cce_loss)
-    """
 
     loss, acc = model.evaluate(dataset[0],
                                dataset[1],
