@@ -18,7 +18,14 @@ from attack.watermarking_attack import watermarking_attack
 from attack.clean_label_attack_transferable import clean_label_attack_transferable
 from attack.adversarial_example_attack import adversarial_example_attack
 from models.build_models import FeatureExtractor, ExperimentDataset, TransferLearningModel
-from tensorflow_privacy.privacy.optimizers.dp_optimizer_keras import DPKerasSGDOptimizer
+from tensorflow_privacy import DPKerasAdamOptimizer
+
+DP_SGD_HYPERPARAMETERS = {
+    'noise_multiplier':1.,
+    'l2_norm_clip': 1.0,
+    'num_microbatches': 100,
+    'learning_rate': 0.001
+}
 
 class PoisonAttack:
     def __init__(self,
@@ -52,31 +59,31 @@ class PoisonAttack:
         self.attack_config = attack_config
         self._attack_setup()
         # Update data preprocessor
-        if self.poison_encoder_name == 'vgg16':
+        if 'vgg16' in self.poison_encoder_name:
             self.dataset.preprocess_fn = tf.keras.applications.vgg16.preprocess_input
             self.dataset.preprocess_type = 'caffe' 
             self.dataset.preprocess_mean = [103.939, 116.779, 123.68]
             self.dataset.image_scale = np.array([np.array([0,255])-x for x in self.dataset.preprocess_mean])\
                                        .transpose()
-        elif self.poison_encoder_name == 'resnet50':
+        elif 'resnet50' in self.poison_encoder_name:
             self.dataset.preprocess_fn = tf.keras.applications.resnet.preprocess_input
             self.dataset.preprocess_type = 'caffe' 
             self.dataset.preprocess_mean = [103.939, 116.779, 123.68]
             self.dataset.image_scale = np.array([np.array([0,255])-x for x in self.dataset.preprocess_mean])\
                                        .transpose()
-        elif self.poison_encoder_name == 'inceptionv3':
+        elif 'inceptionv3' in self.poison_encoder_name:
             self.dataset.preprocess_fn = tf.keras.applications.inception_v3.preprocess_input
             self.dataset.preprocess_type = 'tensorflow' 
             self.dataset.preprocess_mean = [0, 0, 0]
             self.dataset.image_scale = np.array([[-1., 1.] for i in range(3)])\
                                        .transpose()
-        elif self.poison_encoder_name == 'mobilenetv2':
+        elif 'mobilenetv2' in self.poison_encoder_name:
             self.dataset.preprocess_fn = tf.keras.applications.mobilenet_v2.preprocess_input
             self.dataset.preprocess_type = 'tensorflow' 
             self.dataset.preprocess_mean = [0, 0, 0]
             self.dataset.image_scale = np.array([[-1., 1.] for i in range(3)])\
                                        .transpose()
-        elif self.poison_encoder_name == 'xception':
+        elif 'xception' in self.poison_encoder_name:
             self.dataset.preprocess_fn = tf.keras.applications.xception.preprocess_input
             self.dataset.preprocess_type = 'tensorflow' 
             self.dataset.preprocess_mean = [0, 0, 0]
@@ -497,19 +504,16 @@ class PoisonAttack:
         else:
             clean_dataset = self.dataset.get_member_dataset()
             if 'finetuned' in self.target_encoder_name and 'dp' in self.target_encoder_name:
-                dp_opt = DPKerasSGDOptimizer(
-                             l2_norm_clip=1.0,
-                             noise_multiplier=3,
-                             num_microbatches=100,
-                             learning_rate=0.1
+                print('With DP')
+                dp_opt = DPKerasAdamOptimizer(
+                             **DP_SGD_HYPERPARAMETERS
                          )
-                
                 tl = TransferLearningModel(self.target_encoder_name,
                                            self.input_shape,
                                            self.fcn_sizes,
                                            optimizer=dp_opt,
                                            loss_fn=tf.keras.losses.CategoricalCrossentropy(
-                                               from_logits=True, reduction=tf.losses.Reduction.NONE
+                                               reduction=tf.losses.Reduction.NONE
                                            ))
             elif 'finetuned' in self.target_encoder_name:
                 tl = TransferLearningModel(self.target_encoder_name,
@@ -517,11 +521,9 @@ class PoisonAttack:
                                            self.fcn_sizes,
                                            optimizer=tf.keras.optimizers.Adam(lr=1e-5))
             elif 'dp' in self.target_encoder_name:
-                dp_opt = DPKerasSGDOptimizer(
-                             l2_norm_clip=1.0,
-                             noise_multiplier=3,
-                             num_microbatches=100,
-                             learning_rate=0.1
+                print('With DP')
+                dp_opt = DPKerasAdamOptimizer(
+                             **DP_SGD_HYPERPARAMETERS
                          )
                 
                 tl = TransferLearningModel(self.target_encoder_name,
@@ -529,7 +531,7 @@ class PoisonAttack:
                                            self.fcn_sizes,
                                            optimizer=dp_opt,
                                            loss_fn=tf.keras.losses.CategoricalCrossentropy(
-                                               from_logits=True, reduction=tf.losses.Reduction.NONE
+                                               reduction=tf.losses.Reduction.NONE
                                            ))
             else:
                 tl = TransferLearningModel(self.target_encoder_name,
@@ -555,17 +557,27 @@ class PoisonAttack:
             poison_dataset = self.get_poison_dataset()
             training_dataset = merge_dataset(clean_dataset, poison_dataset)
 
-            if 'finetuned' in self.target_encoder_name:
+            if 'finetuned' in self.target_encoder_name and 'dp' in self.target_encoder_name:
+                print('With DP')
+                dp_opt = DPKerasAdamOptimizer(
+                             **DP_SGD_HYPERPARAMETERS
+                         )
+                tl = TransferLearningModel(self.target_encoder_name,
+                                           self.input_shape,
+                                           self.fcn_sizes,
+                                           optimizer=dp_opt,
+                                           loss_fn=tf.keras.losses.CategoricalCrossentropy(
+                                               reduction=tf.losses.Reduction.NONE
+                                           ))
+            elif 'finetuned' in self.target_encoder_name:
                 tl = TransferLearningModel(self.target_encoder_name,
                                            self.input_shape,
                                            self.fcn_sizes,
                                            optimizer=tf.keras.optimizers.Adam(lr=1e-5))
             elif 'dp' in self.target_encoder_name:
-                dp_opt = DPKerasSGDOptimizer(
-                             l2_norm_clip=1.0,
-                             noise_multiplier=3,
-                             num_microbatches=100,
-                             learning_rate=0.1
+                print('With DP')
+                dp_opt = DPKerasAdamOptimizer(
+                             **DP_SGD_HYPERPARAMETERS
                          )
                 
                 tl = TransferLearningModel(self.target_encoder_name,
@@ -573,7 +585,7 @@ class PoisonAttack:
                                            self.fcn_sizes,
                                            optimizer=dp_opt,
                                            loss_fn=tf.keras.losses.CategoricalCrossentropy(
-                                               from_logits=True, reduction=tf.losses.Reduction.NONE
+                                               reduction=tf.losses.Reduction.NONE
                                            ))
             else:
                 tl = TransferLearningModel(self.target_encoder_name,

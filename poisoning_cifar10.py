@@ -32,8 +32,6 @@ poison_dataset_config = {
     'input_shape': INPUT_SIZE,
 }
 
-
-
 def attack_cifar10(poison_config):
 
     attack_config = {
@@ -97,8 +95,9 @@ def calculate_mia():
     dirty_model_auc = {}
     clean_model_acc = {}
     dirty_model_acc = {}
-    ENCODERS = ['inceptionv3', 'mobilenetv2', 'xception', 'vgg16', 'resnet50']
+    ENCODERS = ['vgg16','resnet50', 'inceptionv3', 'mobilenetv2', 'xception']
     #ENCODERS = [encoder + '_finetuned' for encoder in ENCODERS]
+    #ENCODERS = ['dp_'+encoder for encoder in ENCODERS]
     for encoder in ENCODERS:
         clean_model_auc[encoder] = []
         dirty_model_auc[encoder] = []
@@ -161,8 +160,8 @@ def calculate_mia():
         pickle.dump(results, f)
 
 if __name__ == '__main__':
-    #calculate_mia()
-    #exit(0)
+    calculate_mia()
+    exit(0)
     INPUT_SIZE = (96, 96, 3)
     poison_dataset_config = {
         'dataset_name': 'cifar10',
@@ -173,10 +172,13 @@ if __name__ == '__main__':
         'iters': 1000,
         'learning_rate': 0.02,
         'batch_size': 150,
-        'if_selection': False
+        'if_selection': False,
     }
 
     attack_type = args.attack_type
+
+    if attack_type == 'watermarking':
+        attack_config['opacity'] = 0.8
 
     for target_class in [args.target_class]:
         for seed_amount in [args.seed_amount]:

@@ -35,16 +35,11 @@ class TransferLearningModel:
         tf.random.set_seed(54321)
         inputs = tf.keras.Input(shape=self.input_shape)
         x = self.feature_extractor.model(inputs, training=False)
-        """
-        if self.base_model.name in ['xception', 'mobilenetv2']:
-            x = tf.keras.layers.GlobalAveragePooling2D()(x)
-        x = tf.keras.layers.Flatten(name='flatten')(x)
-        """
+
         for fcn_size in self.fcn_sizes[:-1]:
             x = tf.keras.layers.Dense(fcn_size, activation='tanh')(x)
         outputs = tf.keras.layers.Dense(self.fcn_sizes[-1], activation='softmax')(x)
         self.model = tf.keras.Model(inputs, outputs)
-        #self.model.summary()
         if self._if_compile:
             self.model.compile(
                 optimizer=self.optimizer,
@@ -153,8 +148,6 @@ class FeatureExtractor:
             else:
                 self.model = tf.keras.applications\
                             .xception.Xception(**PRETRAINED_MODEL_SETTING)
-            #self.model.add(tf.keras.layers.GlobalAveragePooling2D())
-            #self.model.add(tf.keras.layers.Flatten())
             self.preprocess_fn = tf.keras.applications.xception.preprocess_input
             self.preprocess_type = 'tensorflow' 
             self.preprocess_mean = [0, 0, 0]
@@ -212,7 +205,7 @@ class FeatureExtractor:
         self.model.trainable = if_fine_tune
         #self.model.summary()
 
-DATASET_ROOT = '/data/cyf/projects/datasets/'
+DATASET_ROOT = './datasets/'
 
 class ExperimentDataset:
     def __init__(self,
@@ -274,11 +267,7 @@ class ExperimentDataset:
         (train_x, train_y), (test_x, test_y) = tf.keras.datasets.cifar10.load_data()
         train_y = train_y.reshape((-1))
         test_y = test_y.reshape((-1))
-        """
-        self._member_dataset_ori = (train_x[:self.member_amount], train_y[:self.member_amount])
-        self._nonmember_dataset_ori =(train_x[self.member_amount:2*self.member_amount],
-                                      train_y[self.member_amount:2*self.member_amount]) 
-        """
+
         sub_class_amount = int(self.member_amount/self.num_classes)
         self._member_dataset_ori = self._get_balanced_data(train_x,
                                                            train_y,
@@ -295,11 +284,7 @@ class ExperimentDataset:
         (train_x, train_y), (test_x, test_y) = tf.keras.datasets.cifar10.load_data()
         train_y = train_y.reshape((-1))
         test_y = test_y.reshape((-1))
-        """
-        self._member_dataset_ori = (train_x[:self.member_amount], train_y[:self.member_amount])
-        self._nonmember_dataset_ori =(train_x[self.member_amount:2*self.member_amount],
-                                      train_y[self.member_amount:2*self.member_amount]) 
-        """
+
         sub_class_amount = int(self.member_amount/self.num_classes)
         self._member_dataset_ori = self._get_balanced_data(train_x,
                                                            train_y,
@@ -355,14 +340,7 @@ class ExperimentDataset:
     def _prepare_mnist(self):
         self.num_classes = 10
         (train_x, train_y), (test_x, test_y) = tf.keras.datasets.mnist.load_data()
-        #train_x = self._grayscale_to_rgb(train_x)
-        #test_x = self._grayscale_to_rgb(test_x)
-        """
-        self._member_dataset_ori = (self._grayscale_to_rgb(train_x[:self.member_amount]),
-                                    train_y[:self.member_amount])
-        self._nonmember_dataset_ori = (self._grayscale_to_rgb(train_x[self.member_amount:2*self.member_amount]),
-                                       train_y[self.member_amount:2*self.member_amount])
-        """
+
         sub_class_amount = int(self.member_amount/self.num_classes)
         self._member_dataset_ori = self._get_balanced_data(train_x,
                                                            train_y,
@@ -398,14 +376,6 @@ class ExperimentDataset:
                                                            train_y,
                                                            2*sub_class_amount,
                                                            3*sub_class_amount)
-        """
-        self._member_dataset_ori = (x[:self.member_amount],
-                                    y[:self.member_amount].reshape((self.member_amount,-1)))
-        self._nonmember_dataset_ori = (x[self.member_amount:2*self.member_amount],
-                                       y[self.member_amount:2*self.member_amount].reshape((self.member_amount,-1)))
-        self._attack_dataset_ori = (x[2*self.member_amount:3*self.member_amount],
-                                    y[2*self.member_amount:3*self.member_amount].reshape((self.member_amount,-1)))
-        """
     
     def _prepare_celeba(self):
         self.num_classes = 2**len(self.face_attrs)
@@ -448,15 +418,6 @@ class ExperimentDataset:
         self._attack_dataset_ori = (_read_celeba_imgs(self._attack_dataset_ori[0]),
                                     self._attack_dataset_ori[1])
         
-        """
-        self._member_dataset_ori = (_read_celeba_imgs(attrs_selected.iloc[:self.member_amount,0]), 
-                                     labels[:self.member_amount])
-        self._nonmember_dataset_ori = (_read_celeba_imgs(attrs_selected.iloc[self.member_amount:2*self.member_amount,0]), 
-                                        labels[self.member_amount:2*self.member_amount])
-        self._attack_dataset_ori = (_read_celeba_imgs(attrs_selected.iloc[2*self.member_amount:3*self.member_amount,0]), 
-                                    labels[2*self.member_amount:3*self.member_amount])
-        """
-    
     def _prepare_stl10(self):
         self.num_classes = 10
         stl10_dir = os.path.join(DATASET_ROOT, 'stl10_binary')
@@ -489,22 +450,12 @@ class ExperimentDataset:
                                                            sub_class_amount,
                                                            None) 
 
-        """
-        self._member_dataset_ori = (train_x[:self.member_amount],
-                                    train_y[:self.member_amount])
-        self._attack_dataset_ori = (train_x[self.member_amount:],
-                                    train_y[self.member_amount:])
-        """
-
         del train_x, train_y
         gc.collect()
 
         test_x = _read_imgs(test_x_path)
         test_y = _read_labels(test_y_path)
-        """
-        self._nonmember_dataset_ori = (test_x[-self.member_amount:],
-                                       test_y[-self.member_amount:])
-        """
+
         self._nonmember_dataset_ori = self._get_balanced_data(test_x,
                                                               test_y,
                                                               -sub_class_amount,
@@ -580,90 +531,6 @@ class ExperimentDataset:
         
     def _to_onehot(self, y):
         return tf.keras.utils.to_categorical(y, num_classes=self.num_classes)
-
-
-"""
-# For evaluating the training accuracy for each class
-class TrainingAccuracyPerClass(tf.keras.metrics.Metric):
-    def __init__(self, name='training_accuracy_per_class', **kwargs):
-        super(TrainingAccuracyPerClass, self).__init__(name=name, **kwargs)
-        self.accuracies = None
-    
-    def update_state(self, y_true, y_pred, sample_weight=None):
-        if self.accuracies is None:
-            self.num_classes = y_pred.shape[-1]
-            self.accuracies = self.add_weight(shape=(self.num_classes,), 
-                                              name='acc_per', initializer='zeros')
-            self.num_matched_preds = self.add_weight(shape=(self.num_classes,),
-                                                     name='num_matched_preds', initializer='zeros')
-            self.num_preds = self.add_weight(shape=(self.num_classes,),
-                                             name='num_preds', initializer='zeros')
-
-        y_true = tf.cast(tf.reshape(tf.argmax(y_true, axis=-1), shape=(-1,1)), 'int32')
-        y_pred = tf.cast(tf.reshape(tf.argmax(y_pred, axis=-1), shape=(-1,1)), 'int32')
-
-        matched_preds = tf.boolean_mask(y_pred, tf.squeeze(y_true==y_pred))
-
-        num_sub = []
-        num_sub_matched = []
-     
-        for i in range(self.num_classes):
-            num_sub.append(tf.reduce_sum(tf.cast(y_true==i, tf.float32)))
-            num_sub_matched.append(tf.reduce_sum(tf.cast(matched_preds==i, tf.float32)))
-        self.num_matched_preds.assign_add(tf.convert_to_tensor(num_sub_matched))
-        self.num_preds.assign_add(tf.convert_to_tensor(num_sub))
-
-    def reset_state(self):
-        self.accuracies.assign(tf.zeros(self.accuracies.shape))
-        self.num_matched_preds.assign(tf.zeros(self.num_matched_preds.shape))
-        self.num_preds.assign(tf.zeros(self.num_preds.shape))
-
-    def result(self):
-        self.accuracies.assign(self.num_matched_preds/self.num_preds)
-        return self.accuracies
-
-# For evaluating the training loss for each class
-cce = tf.keras.losses.CategoricalCrossentropy(reduction=tf.keras.losses.Reduction.SUM)
-class TrainingLossPerClass(tf.keras.metrics.Metric):
-    def __init__(self, name='training_loss_per_class', **kwargs):
-        super(TrainingLossPerClass, self).__init__(name=name, **kwargs)
-        self.losses_perclass = None
-    
-    def update_state(self, y_true, y_pred, sample_weight=None):
-        if self.losses_perclass is None:
-            self.num_classes = y_pred.shape[-1]
-            self.losses_perclass = self.add_weight(shape=(self.num_classes,), 
-                                          name='loss_per', initializer='zeros')
-            self.num_preds = self.add_weight(shape=(self.num_classes,),
-                                             name='num_preds', initializer='zeros')
-
-        pred_labels = tf.cast(tf.reshape(tf.argmax(y_pred, axis=-1), shape=(-1,1)), 'int32')
-
-        num_sub = []
-        loss_sub = []
-     
-        for i in range(self.num_classes):
-            num_sub.append(tf.reduce_sum(tf.cast(pred_labels==i, tf.float32)))
-
-            y_preds_sub = tf.boolean_mask(y_pred, tf.squeeze(pred_labels==i))
-            y_true_sub = tf.boolean_mask(y_true, tf.squeeze(pred_labels==i))
-
-            loss_sub.append(cce(y_true_sub, y_preds_sub))
-            
-        num_sub = tf.convert_to_tensor(num_sub)
-        loss_sub = tf.convert_to_tensor(loss_sub)
-        self.num_preds.assign_add(num_sub)
-        self.losses_perclass.assign_add(loss_sub)
-        #self.losses_perclass.assign_add(loss_sub)
-
-    def reset_state(self):
-        self.losses_perclass.assign(tf.zeros(self.losses_perclass.shape))
-        self.num_preds.assign(tf.zeros(self.num_preds.shape))
-
-    def result(self):
-        #self.losses_perclass.assign(self.losses_perclass/self.num_preds)
-        return tf.math.divide_no_nan(self.losses_perclass,self.num_preds)
-"""
 
 def test_transfer_learing():
     input_shape = (96,96,3)

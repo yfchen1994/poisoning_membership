@@ -68,14 +68,18 @@ def inspect_checkpoints(model,
                         member_dataset,
                         nonmember_dataset,
                         poison_dataset,
+                        target_class,
                         max_epoch=20):
     # Path of the checkpoints
-    # "checkpoints/clean_model/target_{target_class}/{model_name}"
-    # "checkpoints/{attack_type}/target_{target_class}/{model_name}"
+    # "checkpoints/{dataset_name}/clean_model/{model_name}"
+    # "checkpoints/{dataset_name}/{attack_type}/target_{target_class}/{model_name}"
+    print("Inspecting checkpoints (Results -> {})".format(results_path))
+    if os.path.exists(results_path):
+    # To avoid reduplicated runns.
+        return 
     ckpt = tf.train.Checkpoint(model)
 
     class_num = member_dataset[1].shape[1]
-    target_class = int(checkpoint_dir.split('/')[3].split('_')[1])
 
     # In our evaluation, we do not consider the normal samples in the poisoning dataset.
     # These smaples are just used to make the poisoning dataset balanced.

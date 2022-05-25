@@ -10,7 +10,9 @@ from sklearn.metrics import roc_auc_score, roc_curve
 import tensorflow as tf
 import pickle
 import PIL
+import lzma
 from attack.inspect_checkpoints import inspect_checkpoints
+from utils import check_directory
 
 def clear_previous_kernel():
     tf.keras.backend.clear_session()
@@ -87,6 +89,11 @@ def get_l2_distance(e1, e2):
                     for v1 in e1]
     return np.array(distance)
 
+
+from scipy import spatial
+def get_angular_distance(matrix_a, matrix_b):
+    return 1 - spatial.cosine(matrix_a, matrix_b)
+
 def find_nearest_embeedings(seed_embeedings, anchorpoint_embeedings, return_distance=False, k=10):
     """For each seed, find the nearest anchorpoint embeeding.
 
@@ -98,6 +105,7 @@ def find_nearest_embeedings(seed_embeedings, anchorpoint_embeedings, return_dist
         tuple: (corresponding anchorpoint_embeedings, anchorpoint indices)
     """
     distance = get_l2_distance(seed_embeedings, anchorpoint_embeedings)
+    #distance = get_angular_distance(seed_embeedings, anchorpoint_embeedings)
     nearest_idx = np.argsort(distance, axis=1)
     print(nearest_idx[:,:k].shape)
     if return_distance:
@@ -205,31 +213,7 @@ def check_mia(poison_config,
                           poison_dataset_config,
                           attack_config)
 
-    checkpoint_dir = "./checkpoints/clean_model/target_{}/{}".format(attack.target_class,
-                                                                     attack.target_encoder_name)
-    member_dataset = attack.dataset.get_member_dataset()
-    nonmember_dataset = attack.dataset.get_nonmember_dataset()
-    poison_dataset = attack.get_poison_dataset()
-    results_path = os.path.join(checkpoint_dir.replace('checkpoints', 'learning_dynamics'), 'learning_dynamics.pkl')
-    if os.path.exists(checkpoint_dir):
-        print("Inspecting the checkpoints of the clean model")
-        model = attack.get_clean_model()
-        inspect_checkpoints(model,
-                            checkpoint_dir,
-                            results_path,
-                            member_dataset,
-                            nonmember_dataset,
-                            poison_dataset)
-
-        checkpoint_dir = checkpoint_dir.replace('clean_model', attack.attack_type)
-        results_path = results_path.replace('clean_model', attack.attack_type)
-        print("Inspecting the checkpoints of the poisoned model")
-        inspect_checkpoints(model,
-                            checkpoint_dir,
-                            results_path,
-                            member_dataset,
-                            nonmember_dataset,
-                            poison_dataset)
+    measure_distance_flag = False 
 
     member_dataset = attack.dataset.get_member_dataset(target_class=target_class)
     nonmember_dataset = attack.dataset.get_nonmember_dataset(target_class=target_class)
@@ -251,7 +235,9 @@ def check_mia(poison_config,
           .format(clean_test_acc_sub*100, len(nonmember_dataset[0])))
     print("Testing accuracy of the whole dataset: {:.2f}% ({})"\
           .format(clean_test_acc*100, len(testing_dataset[0])))
+
     del model
+
     gc.collect()
     print("*"*20)
     print("Poisoning model.")
@@ -318,45 +304,94 @@ def check_mia(poison_config,
                                           attack_type=attack.attack_type,
                                           dataset_name=poison_dataset_config['dataset_name'])
     if visualize_flag:
-        with open('{}_{}_{}_{}_tsne_results.pkl'.format(poison_dataset_config['dataset_name'], 
+        with lzma.open('{}_{}_{}_{}_tsne_results.xz'.format(poison_dataset_config['dataset_name'], 
                                                     attack.target_encoder_name, 
                                                     attack.attack_type,
                                                     target_class), 'wb') as f:
             pickle.dump(tsne_results, f)
 
-    measure_distance_flag = False 
     if measure_distance_flag:
+
+        # The old implementation
+        member_dataset = attack.dataset.get_member_dataset()
         poison_dataset = attack.get_poison_dataset()
-        member_dataset = attack.dataset.get_member_dataset(target_class=target_class)
-        nonmember_dataset = attack.dataset.get_nonmember_dataset(target_class=target_class)
-        member_distances, nonmember_distances, member_score, nonmember_score = measure_nearest_distance(model=model,
+        score_clean, score_poisoned = member_heuristics(model,
+                                                        member_dataset,
+                                                        target_class=target_class,
+                                                        poison_dataset=poison_dataset)
+        """
+        scores=measure_nearest_distance(model=model,
                            member_dataset=member_dataset,
-                           nonmember_dataset=nonmember_dataset,
+                           whole_member_dataset=whole_member_dataset,
+                           #nonmember_dataset=nonmember_dataset,
                            poison_dataset=poison_dataset,
                            target_class=target_class,
                            encoder_name=attack.target_encoder_name,
                            dataset_name=poison_dataset_config['dataset_name'],
                            attack_type=attack.attack_type)
-        distances = {}
-        distances['member_distances'] = member_distances 
-        distances['nonmember_distances'] = nonmember_distances 
-        distances['member_score'] = member_score
-        distances['nonmember_score'] = nonmember_score
-        with open('{}_{}_{}_{}_distances.pkl'.format(poison_dataset_config['dataset_name'], 
-                                                  attack.target_encoder_name, 
-                                                  attack.attack_type,
-                                                  target_class), 'wb') as f:
-            pickle.dump(distances, f)
+        """
+        record_path = 'scores/{}_{}_{}_{}_scores.xz'.format(poison_dataset_config['dataset_name'], 
+                                                      attack.target_encoder_name, 
+                                                      attack.attack_type,
+                                                      target_class)
+        
+        check_directory(os.path.dirname(record_path))
+
+        with lzma.open(record_path, 'wb') as f:
+            pickle.dump(score_poisoned, f)  
+        
+        if 'finetuned' in attack.target_encoder_name:
+            model = attack.get_clean_model()
+            score_clean, score_poisoned = member_heuristics(model,
+                                                            member_dataset,
+                                                            target_class=target_class,
+                                                            poison_dataset=poison_dataset)
+
+        record_path = record_path.replace(attack.attack_type, 'clean_model')
+        with lzma.open(record_path, 'wb') as f:
+            pickle.dump(score_clean, f)  
+
+
+    return
 
     del model
     gc.collect()
     print("Diff:{:.2f}".format(poison_auc-clean_auc))
     print('='*30)
 
-
     # Path of the checkpoints
     # "checkpoints/clean_model/target_{target_class}/{model_name}"
     # "checkpoints/{attack_type}/target_{target_class}/{model_name}"
+    checkpoint_dir = "./checkpoints/{}/clean_model/{}".format(attack.dataset_name, attack.target_encoder_name)
+    member_dataset = attack.dataset.get_member_dataset()
+    nonmember_dataset = attack.dataset.get_nonmember_dataset()
+    poison_dataset = attack.get_poison_dataset()
+    results_path = "./learning_dynamics/{}/clean_model/target_{}/{}".format(attack.dataset_name, target_class, attack.target_encoder_name) 
+    results_path = os.path.join(results_path.replace('checkpoints', 'learning_dynamics'), 'learning_dynamics.pkl')
+    if os.path.exists(checkpoint_dir):
+        print("Inspecting the checkpoints of the clean model")
+        model = attack.get_clean_model()
+        inspect_checkpoints(model,
+                            checkpoint_dir,
+                            results_path,
+                            member_dataset,
+                            nonmember_dataset,
+                            poison_dataset,
+                            target_class=attack.target_class)
+
+        checkpoint_dir = "./checkpoints/{}/{}/target_{}/{}".format(attack.dataset_name, 
+                                                            attack.attack_type,
+                                                            attack.target_class,
+                                                            attack.target_encoder_name)
+        results_path = os.path.join(checkpoint_dir.replace('checkpoints', 'learning_dynamics'), 'learning_dynamics.pkl')
+        print("Inspecting the checkpoints of the poisoned model")
+        inspect_checkpoints(model,
+                            checkpoint_dir,
+                            results_path,
+                            member_dataset,
+                            nonmember_dataset,
+                            poison_dataset,
+                            target_class=attack.target_class)
 
 def extract_features(model,
                      inputs):
@@ -490,9 +525,47 @@ def change_img_order(anchorpoint_img_dir, seed_img_dir, seed_label_path):
     os.system('rm ' + os.path.join(anchorpoint_img_dir, 'idx.npy'))
     save_poison_label(seed_idx, os.path.join(seed_img_dir, 'idx.npy'))
 
+def member_heuristics(model,
+                      member_dataset,
+                      #nonmember_dataset,
+                      target_class=0,
+                      poison_dataset=None):
+    member_x, member_y = member_dataset 
+    member_label = np.argmax(member_y, axis=1)
+    member_feature = extract_features(model, member_x)
+    targeted_member_feature = member_feature[np.where(member_label==target_class)]
+
+    targeted_member_num = len(targeted_member_feature)
+
+    correct_label_feature = targeted_member_feature.copy()
+    uncorrect_label_feature = member_feature[np.where(member_label!=target_class)]
+    untargeted_member_num = len(uncorrect_label_feature)
+
+    if poison_dataset:
+        poison_x, poison_y = poison_dataset 
+        poison_label = np.argmax(poison_y, axis=1)
+        poison_feature = extract_features(model, poison_x)
+        correct_label_feature = np.r_[correct_label_feature,
+                                       poison_feature[np.where(poison_label==target_class)]]
+        uncorrect_label_feature = np.r_[uncorrect_label_feature,
+                                        poison_feature[np.where(poison_label!=target_class)]]
+    mc_distances = spatial.distance.cdist(targeted_member_feature, correct_label_feature)    
+    mu_distances = spatial.distance.cdist(targeted_member_feature, uncorrect_label_feature)
+
+    mc_distances_clean = np.sort(mc_distances[:,:targeted_member_num], axis=1)
+    mu_distances_clean = np.sort(mu_distances[:, :untargeted_member_num], axis=1)
+    score_clean = (mu_distances_clean[:,0] - mc_distances_clean[:,1]) / np.min(np.c_[mu_distances_clean[:,0], mu_distances_clean[:,1]], axis=1)
+
+    mc_distances = np.sort(mc_distances, axis=1)
+    mu_distances = np.sort(mu_distances, axis=1)
+    score_poisoned = (mu_distances[:,0]-mc_distances[:,1]) / np.min(np.c_[mu_distances[:,0], mu_distances[:,1]], axis=1)
+
+    return (score_clean, score_poisoned)
+
 def measure_nearest_distance(model,
                              member_dataset,
-                             nonmember_dataset,
+                             #nonmember_dataset,
+                             whole_member_dataset,
                              poison_dataset,
                              target_class,
                              encoder_name,
@@ -501,16 +574,47 @@ def measure_nearest_distance(model,
                              metric='Mentr'):
     memberfeatures = extract_features(model,
                                       member_dataset[0])
-    nonmemberfeatures = extract_features(model,
-                                         nonmember_dataset[0])
+    #nonmemberfeatures = extract_features(model,
+    #                                     nonmember_dataset[0])
     poison_x, poison_y = poison_dataset
-    poison_x = poison_x[np.where(np.argmax(poison_y,axis=1)!=target_class)]
+    poison_label = np.argmax(poison_y, axis=1)
+    #poison_x = poison_x[np.where(np.argmax(poison_y,axis=1)!=target_class)]
+    whole_member_x, whole_member_y = whole_member_dataset
+    whole_member_label = np.argmax(whole_member_y, axis=1)
+    correct_label_x = np.r_[member_dataset[0],
+                            poison_x[np.where(poison_label==target_class)]]
+    uncorrect_label_x = np.r_[whole_member_x[np.where(whole_member_label!=target_class)],
+                              poison_x[np.where(poison_label!=target_class)]]
+    correct_label_features = extract_features(model, correct_label_x)
+    uncorrect_label_features = extract_features(model, uncorrect_label_x)
+
+
+    mc_distances = np.sort(spatial.distance.cdist(memberfeatures, correct_label_features), axis=1)
+    mu_distances = np.sort(spatial.distance.cdist(memberfeatures, uncorrect_label_features), axis=1)
+    return (mu_distances[:,0]-mc_distances[:,1]) / np.min(np.c_[mu_distances[:,0], mu_distances[:,1]])
+
     poisonfeatures = extract_features(model,
-                                     poison_dataset[0])
+                                      poison_x)
     
-    member_distances = find_nearest_embeedings(memberfeatures, poisonfeatures, return_distance=True,k=1)
+    mm_distances = np.sort(spatial.distance.cdist(memberfeatures, memberfeatures), axis=1)
+    mp_distances = np.sort(spatial.distance.cdist(memberfeatures, poisonfeatures), axis=1)
+    # The nearest distance to the member
+    #scores = np.sum(mp_distances < mm_nearest_distances, axis=1)
+    return (mp_distances[:,0] - mm_distances[:,1]) / np.min(np.c_[mp_distances[:,0], mm_distances[:,1]], axis=1)
+
+    #mp_distances = np.sort(spatial.distance.cdist(memberfeatures, poisonfeatures), axis=1)
+    #mp_distances = spatial.distance.cdist(memberfeatures, poisonfeatures)
+    #member_labels = np.argmax(member_dataset[1], axis=1)
+    #pm_target = np.mean(mp_distances[np.where(member_labels==target_class)],axis=0) 
+    #pm_nontarget = np.mean(mp_distances[np.where(member_labels!=target_class)],axis=0) 
+    #return pm_target / pm_nontarget
+
+    #return np.mean(pm_distances, axis=1) / np.mean(mm_distances[:,1:])
+    #return np.mean(mp_distances, axis=1) / np.mean(mm_distances[:, 1:], axis=1)
+    
+    member_distances = find_nearest_embeedings(memberfeatures, poisonfeatures, return_distance=True,k=10)
     member_distances = member_distances / memberfeatures.shape[1]
-    nonmember_distances = find_nearest_embeedings(nonmemberfeatures, poisonfeatures, return_distance=True,k=1)
+    nonmember_distances = find_nearest_embeedings(nonmemberfeatures, poisonfeatures, return_distance=True,k=10)
     nonmember_distances = nonmember_distances / nonmemberfeatures.shape[1]
     member_preds = model.predict(member_dataset[0])
     nonmember_preds = model.predict(nonmember_dataset[0])
