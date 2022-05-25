@@ -96,8 +96,6 @@ def calculate_mia():
     clean_model_acc = {}
     dirty_model_acc = {}
     ENCODERS = ['vgg16','resnet50', 'inceptionv3', 'mobilenetv2', 'xception']
-    #ENCODERS = [encoder + '_finetuned' for encoder in ENCODERS]
-    #ENCODERS = ['dp_'+encoder for encoder in ENCODERS]
     for encoder in ENCODERS:
         clean_model_auc[encoder] = []
         dirty_model_auc[encoder] = []
