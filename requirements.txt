@@ -1,0 +1,13 @@
+numpy==1.19.5
+opencv-python==4.5.5.62
+tensorflow==2.5.2
+tensorflow-addons==0.14.0
+tensorflow-datasets==4.5.2
+tensorflow-estimator==2.5.0
+tensorflow-federated==0.19.0
+tensorflow-gpu==2.5.2
+tensorflow-graphics==2021.12.3
+tensorflow-metadata==1.2.0
+tensorflow-model-optimization==0.5.0
+tensorflow-privacy==0.5.2
+tensorflow-probability==0.12.0
