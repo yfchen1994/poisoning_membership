@@ -492,12 +492,12 @@ class PoisonAttack:
                 tl = TransferLearningModel(self.target_encoder_name,
                                         self.input_shape,
                                         self.fcn_sizes)
-            summarize_keras_trainable_variables(tl.model, 'get poisoning model')
+            summarize_keras_trainable_variables(tl.model, ': start poisoning model')
             tl.transfer_learning(training_dataset,save_ckpts=self.save_ckpts,
                                  ckpt_info="{}/{}/target_{}/".format(self.dataset_name,
                                                                      self.attack_type, 
                                                                      self.target_class))
-            summarize_keras_trainable_variables(tl.model, 'after poisoning model')
+            summarize_keras_trainable_variables(tl.model, ': after poisoning model')
             check_directory(self.poisoned_model_dir)
             with open(self.poisoned_model_path+'.history.pkl', 'wb') as handle:
                 pickle.dump(tl.tl_history, handle)

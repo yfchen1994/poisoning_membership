@@ -29,7 +29,7 @@ do
         for dataset in celeba patchcamelyon;
         do
             echo "Dataset $dataset"
-            for (( i=0; i<1; i++ ));
+            for (( i=0; i<2; i++ ));
             do
                 echo "Target class: $i"
                 python poisoning_attack.py --target_class $i --dataset $dataset --encoder $encoder --seed_amount 5000 --attack_type $attack --check_mia True
