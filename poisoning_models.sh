@@ -13,7 +13,6 @@ do
             do
                 echo "Target class: $i"
                 python poisoning_attack.py --target_class $i --dataset $dataset --encoder $encoder --seed_amount 1000 --attack_type $attack
-                exit
             done
         done
 
