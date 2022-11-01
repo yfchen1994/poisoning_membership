@@ -66,3 +66,14 @@ Then, run:
 ./evaluate_attack.sh
 ```
 to get the evaluation results.
+
+## Citation
+```
+@inproceedings{CSSWZ22,
+author = {Yufei Chen and Chao Shen and Yun Shen and Cong Wang and Yang Zhang},
+title = {{Amplifying Membership Exposure via Data Poisoning}},
+booktitle = {{Annual Conference on Neural Information Processing Systems (NeurIPS)}},
+publisher = {NeurIPS},
+year = {2022}
+}
+```
